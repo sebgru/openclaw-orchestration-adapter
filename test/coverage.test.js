@@ -143,6 +143,10 @@ test("failed and blocked tasks can be retried once dependencies are satisfied an
   transitionTask(plan, "dep", "succeeded");
   assert.equal(transitionTask(plan, "child", "ready").state, "ready");
 
+  // `failed -> ready` only reopens because this failure was recorded with
+  // retryable: true (an infrastructure fault) and maxRetries(1) has not been
+  // exhausted yet; see the maxRetries and non-infrastructure tests below for
+  // the bounds on both of those conditions.
   const retry = createPlan([task("retry")]);
   transitionTask(retry, "retry", "ready");
   transitionTask(retry, "retry", "running");
@@ -234,6 +238,35 @@ test("resolveBlocker rejects tasks that are not currently blocked", () => {
   const plan = createPlan([task("solo")]);
   assert.throws(() => resolveBlocker(plan, "solo", "n/a"), /is not blocked/);
   assert.throws(() => resolveBlocker(plan, "missing", "n/a"), /Unknown task ID/);
+});
+
+test("resolveBlocker requires a non-empty explicit reason, not a silent default", () => {
+  const plan = createPlan([task("solo")]);
+  transitionTask(plan, "solo", "blocked", { reason: "awaiting-approval" });
+
+  assert.throws(
+    () => resolveBlocker(plan, "solo", undefined),
+    /requires a non-empty, explicit reason/,
+  );
+  assert.throws(() => resolveBlocker(plan, "solo", ""), /requires a non-empty, explicit reason/);
+  assert.throws(
+    () => resolveBlocker(plan, "solo", "   "),
+    /requires a non-empty, explicit reason/,
+  );
+  assert.throws(
+    () => resolveBlocker(plan, "solo", null),
+    /requires a non-empty, explicit reason/,
+  );
+  // None of the rejected attempts silently resolved the blocker.
+  assert.throws(
+    () => transitionTask(plan, "solo", "ready"),
+    /is blocked; resolve the blocker before retrying/,
+  );
+
+  const resolved = resolveBlocker(plan, "solo", "  operator approved after review  ");
+  assert.equal(resolved.blockerResolved, true);
+  assert.equal(resolved.blockerResolution, "operator approved after review");
+  assert.equal(transitionTask(plan, "solo", "ready").state, "ready");
 });
 
 test("readyTaskIds tolerates references to unknown dependencies", () => {
