@@ -123,36 +123,39 @@ test("createPlan handles diamond dependencies and transition guards", () => {
   assert.deepEqual(readyTaskIds(plan).sort(), ["left", "right"]);
 });
 
-test("failed and blocked tasks can be retried once dependencies are satisfied and reasons are cleared", () => {
-  const plan = createPlan([task("dep"), task("child", ["dep"])]);
-  transitionTask(plan, "dep", "ready");
-  transitionTask(plan, "dep", "running");
-  transitionTask(plan, "dep", "failed", { reason: "infra-timeout", retryable: true });
+test(
+  "failed and blocked tasks can be retried once dependencies are satisfied and reasons are cleared",
+  () => {
+    const plan = createPlan([task("dep"), task("child", ["dep"])]);
+    transitionTask(plan, "dep", "ready");
+    transitionTask(plan, "dep", "running");
+    transitionTask(plan, "dep", "failed", { reason: "infra-timeout", retryable: true });
 
-  transitionTask(plan, "child", "blocked", { reason: "policy-hold" });
-  // A retry stays rejected while the task's own dependency is unresolved,
-  // even with the blocker explicitly resolved.
-  resolveBlocker(plan, "child", "operator cleared the hold");
-  assert.throws(() => transitionTask(plan, "child", "ready"), /not ready/);
+    transitionTask(plan, "child", "blocked", { reason: "policy-hold" });
+    // A retry stays rejected while the task's own dependency is unresolved,
+    // even with the blocker explicitly resolved.
+    resolveBlocker(plan, "child", "operator cleared the hold");
+    assert.throws(() => transitionTask(plan, "child", "ready"), /not ready/);
 
-  // Once the dependency succeeds, a retryable infrastructure failure and a
-  // resolved blocker can both be re-queued.
-  transitionTask(plan, "dep", "ready");
-  transitionTask(plan, "dep", "running");
-  transitionTask(plan, "dep", "verifying");
-  transitionTask(plan, "dep", "succeeded");
-  assert.equal(transitionTask(plan, "child", "ready").state, "ready");
+    // Once the dependency succeeds, a retryable infrastructure failure and a
+    // resolved blocker can both be re-queued.
+    transitionTask(plan, "dep", "ready");
+    transitionTask(plan, "dep", "running");
+    transitionTask(plan, "dep", "verifying");
+    transitionTask(plan, "dep", "succeeded");
+    assert.equal(transitionTask(plan, "child", "ready").state, "ready");
 
-  // `failed -> ready` only reopens because this failure was recorded with
-  // retryable: true (an infrastructure fault) and maxRetries(1) has not been
-  // exhausted yet; see the maxRetries and non-infrastructure tests below for
-  // the bounds on both of those conditions.
-  const retry = createPlan([task("retry")]);
-  transitionTask(retry, "retry", "ready");
-  transitionTask(retry, "retry", "running");
-  transitionTask(retry, "retry", "failed", { reason: "infra-timeout", retryable: true });
-  assert.equal(transitionTask(retry, "retry", "ready").state, "ready");
-});
+    // `failed -> ready` only reopens because this failure was recorded with
+    // retryable: true (an infrastructure fault) and maxRetries(1) has not been
+    // exhausted yet; see the maxRetries and non-infrastructure tests below for
+    // the bounds on both of those conditions.
+    const retry = createPlan([task("retry")]);
+    transitionTask(retry, "retry", "ready");
+    transitionTask(retry, "retry", "running");
+    transitionTask(retry, "retry", "failed", { reason: "infra-timeout", retryable: true });
+    assert.equal(transitionTask(retry, "retry", "ready").state, "ready");
+  },
+);
 
 test("maxRetries=0 rejects any retry even for a recorded infrastructure failure", () => {
   const zeroRetry = task("zero-retry");
@@ -167,21 +170,24 @@ test("maxRetries=0 rejects any retry even for a recorded infrastructure failure"
   );
 });
 
-test("maxRetries=1 permits exactly one explicitly retryable infrastructure retry then rejects another", () => {
-  const plan = createPlan([task("one-retry")]);
-  transitionTask(plan, "one-retry", "ready");
-  transitionTask(plan, "one-retry", "running");
-  transitionTask(plan, "one-retry", "failed", { reason: "worker-crash", retryable: true });
+test(
+  "maxRetries=1 permits one explicitly retryable infrastructure retry then rejects another",
+  () => {
+    const plan = createPlan([task("one-retry")]);
+    transitionTask(plan, "one-retry", "ready");
+    transitionTask(plan, "one-retry", "running");
+    transitionTask(plan, "one-retry", "failed", { reason: "worker-crash", retryable: true });
 
-  assert.equal(transitionTask(plan, "one-retry", "ready").state, "ready");
+    assert.equal(transitionTask(plan, "one-retry", "ready").state, "ready");
 
-  transitionTask(plan, "one-retry", "running");
-  transitionTask(plan, "one-retry", "failed", { reason: "worker-crash-again", retryable: true });
-  assert.throws(
-    () => transitionTask(plan, "one-retry", "ready"),
-    /exhausted its retry budget \(1\)/,
-  );
-});
+    transitionTask(plan, "one-retry", "running");
+    transitionTask(plan, "one-retry", "failed", { reason: "worker-crash-again", retryable: true });
+    assert.throws(
+      () => transitionTask(plan, "one-retry", "ready"),
+      /exhausted its retry budget \(1\)/,
+    );
+  },
+);
 
 test("a non-infrastructure failure (verifier rejection) cannot be retried", () => {
   const plan = createPlan([task("verifier-rejected")]);
@@ -427,56 +433,62 @@ test("dispatchReadyBatch records verifier exceptions and non-Error rejections", 
   assert.equal(plain.tasks.get("plain").retryable, false);
 });
 
-test("dispatchReadyBatch never marks arbitrary worker or resolveModel errors as retryable", async () => {
-  const workerThrows = createPlan([task("worker-throws")]);
-  const workerResult = await dispatchReadyBatch(workerThrows, {
-    resolveModel: async () => "model",
-    worker: async () => {
-      throw new Error("worker contract violation");
-    },
-    verify: async () => ({ ok: true }),
-  });
-  assert.equal(workerResult.dispatched[0].state, "failed");
-  assert.equal(workerThrows.tasks.get("worker-throws").retryable, false);
-  assert.throws(
-    () => transitionTask(workerThrows, "worker-throws", "ready"),
-    /without a recorded retryable infrastructure error/,
-  );
+test(
+  "dispatchReadyBatch never marks arbitrary worker or resolver errors as retryable",
+  async () => {
+    const workerThrows = createPlan([task("worker-throws")]);
+    const workerResult = await dispatchReadyBatch(workerThrows, {
+      resolveModel: async () => "model",
+      worker: async () => {
+        throw new Error("worker contract violation");
+      },
+      verify: async () => ({ ok: true }),
+    });
+    assert.equal(workerResult.dispatched[0].state, "failed");
+    assert.equal(workerThrows.tasks.get("worker-throws").retryable, false);
+    assert.throws(
+      () => transitionTask(workerThrows, "worker-throws", "ready"),
+      /without a recorded retryable infrastructure error/,
+    );
 
-  const resolverThrows = createPlan([task("resolver-throws")]);
-  const resolverResult = await dispatchReadyBatch(resolverThrows, {
-    resolveModel: async () => {
-      throw new Error("no route configured");
-    },
-    worker: async () => ({ result: "ok" }),
-    verify: async () => ({ ok: true }),
-  });
-  assert.equal(resolverResult.dispatched[0].state, "failed");
-  assert.equal(resolverThrows.tasks.get("resolver-throws").retryable, false);
-});
+    const resolverThrows = createPlan([task("resolver-throws")]);
+    const resolverResult = await dispatchReadyBatch(resolverThrows, {
+      resolveModel: async () => {
+        throw new Error("no route configured");
+      },
+      worker: async () => ({ result: "ok" }),
+      verify: async () => ({ ok: true }),
+    });
+    assert.equal(resolverResult.dispatched[0].state, "failed");
+    assert.equal(resolverThrows.tasks.get("resolver-throws").retryable, false);
+  },
+);
 
-test("dispatchReadyBatch marks an explicitly classified infrastructure error as retryable within budget", async () => {
-  const plan = createPlan([task("infra-flaky")]);
-  const infraFailingWorker = async () => {
-    const error = new Error("upstream connection reset");
-    error.name = "InfrastructureError";
-    error.failureKind = "infrastructure";
-    error.retryable = true;
-    throw error;
-  };
+test(
+  "dispatchReadyBatch retries an explicitly classified infrastructure error within budget",
+  async () => {
+    const plan = createPlan([task("infra-flaky")]);
+    const infraFailingWorker = async () => {
+      const error = new Error("upstream connection reset");
+      error.name = "InfrastructureError";
+      error.failureKind = "infrastructure";
+      error.retryable = true;
+      throw error;
+    };
 
-  const first = await dispatchReadyBatch(plan, {
-    resolveModel: async () => "model",
-    worker: infraFailingWorker,
-    verify: async () => ({ ok: true }),
-  });
-  assert.equal(first.dispatched[0].state, "failed");
-  assert.equal(plan.tasks.get("infra-flaky").retryable, true);
+    const first = await dispatchReadyBatch(plan, {
+      resolveModel: async () => "model",
+      worker: infraFailingWorker,
+      verify: async () => ({ ok: true }),
+    });
+    assert.equal(first.dispatched[0].state, "failed");
+    assert.equal(plan.tasks.get("infra-flaky").retryable, true);
 
-  // Unlike verifier rejections or unclassified errors, an explicitly
-  // classified infrastructure failure is eligible for retry within budget.
-  assert.equal(transitionTask(plan, "infra-flaky", "ready").state, "ready");
-});
+    // Unlike verifier rejections or unclassified errors, an explicitly
+    // classified infrastructure failure is eligible for retry within budget.
+    assert.equal(transitionTask(plan, "infra-flaky", "ready").state, "ready");
+  },
+);
 
 test("independent verification is bounded by the task timeout", async () => {
   const bounded = task("verify-timeout");

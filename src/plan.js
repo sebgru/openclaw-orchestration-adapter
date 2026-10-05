@@ -139,9 +139,7 @@ export function resolveBlocker(plan, taskId, reason) {
     throw new TypeError(`Task ${taskId} is not blocked`);
   }
   if (typeof reason !== "string" || reason.trim() === "") {
-    throw new TypeError(
-      `Task ${taskId} blocker resolution requires a non-empty, explicit reason`,
-    );
+    throw new TypeError(`Task ${taskId} blocker resolution requires a non-empty, explicit reason`);
   }
   entry.blockerResolved = true;
   entry.blockerResolution = reason.trim();
