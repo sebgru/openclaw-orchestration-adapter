@@ -49,33 +49,100 @@ export function createPlan(tasks) {
   for (const id of byId.keys()) visit(id);
 
   return {
-    tasks: new Map([...byId].map(([id, task]) => [id, { contract: task, state: "pending" }])),
+    tasks: new Map(
+      [...byId].map(([id, task]) => [
+        id,
+        {
+          contract: task,
+          state: "pending",
+          retries: 0,
+          retryable: false,
+          failureReason: null,
+          blockerReason: null,
+          blockerResolved: false,
+        },
+      ]),
+    ),
   };
+}
+
+/** True when every dependency of a task has already succeeded. */
+function dependenciesSatisfied(plan, entry) {
+  return entry.contract.dependencies.every((id) => plan.tasks.get(id)?.state === "succeeded");
 }
 
 /** Return pending task IDs whose dependencies have all succeeded. */
 export function readyTaskIds(plan) {
   return [...plan.tasks]
-    .filter(
-      ([, entry]) =>
-        entry.state === "pending" &&
-        entry.contract.dependencies.every((id) => plan.tasks.get(id)?.state === "succeeded"),
-    )
+    .filter(([, entry]) => entry.state === "pending" && dependenciesSatisfied(plan, entry))
     .map(([id]) => id);
 }
 
-/** Apply one explicit state transition; terminal states cannot be silently reopened. */
-export function transitionTask(plan, taskId, nextState) {
+/**
+ * Apply one explicit state transition; terminal states cannot be silently reopened.
+ *
+ * `meta` only matters for transitions into `failed` ({ reason, retryable }) or
+ * `blocked` ({ reason }). A `failed -> ready` retry is only permitted when the
+ * recorded failure was marked `retryable` (an infrastructure fault, not a
+ * verifier rejection) and the task has not exhausted `budget.maxRetries`. A
+ * `blocked -> ready` retry additionally requires `resolveBlocker` to have been
+ * called first, so a blocker can't be silently bypassed.
+ */
+export function transitionTask(plan, taskId, nextState, meta = {}) {
   const entry = plan.tasks.get(taskId);
   if (!entry) throw new TypeError(`Unknown task ID: ${taskId}`);
   if (!isTaskState(nextState)) throw new TypeError(`Unknown task state: ${nextState}`);
   if (!ALLOWED_TRANSITIONS[entry.state].has(nextState)) {
     throw new TypeError(`Invalid task transition: ${entry.state} -> ${nextState}`);
   }
-  if (nextState === "ready" && !readyTaskIds(plan).includes(taskId)) {
-    throw new TypeError(`Task ${taskId} is not ready; dependencies have not succeeded`);
+  if (nextState === "ready") {
+    if (!dependenciesSatisfied(plan, entry)) {
+      throw new TypeError(`Task ${taskId} is not ready; dependencies have not succeeded`);
+    }
+    if (entry.state === "failed") {
+      if (!entry.retryable) {
+        throw new TypeError(
+          `Task ${taskId} failed without a recorded retryable infrastructure error and cannot be retried`,
+        );
+      }
+      const maxRetries = entry.contract.budget.maxRetries;
+      if (entry.retries >= maxRetries) {
+        throw new TypeError(`Task ${taskId} has exhausted its retry budget (${maxRetries})`);
+      }
+      entry.retries += 1;
+    }
+    if (entry.state === "blocked" && !entry.blockerResolved) {
+      throw new TypeError(`Task ${taskId} is blocked; resolve the blocker before retrying`);
+    }
+  }
+  if (nextState === "failed") {
+    entry.retryable = Boolean(meta.retryable);
+    entry.failureReason = meta.reason ?? null;
+  }
+  if (nextState === "blocked") {
+    entry.blockerReason = meta.reason ?? null;
+    entry.blockerResolved = false;
   }
   entry.state = nextState;
+  return { ...entry };
+}
+
+/**
+ * Explicitly clear a task's blocker so `blocked -> ready` is permitted.
+ * A task cannot reopen from `blocked` by transition alone; this call records
+ * that a human or caller-side policy actually addressed the blocker.
+ */
+export function resolveBlocker(plan, taskId, reason) {
+  const entry = plan.tasks.get(taskId);
+  if (!entry) throw new TypeError(`Unknown task ID: ${taskId}`);
+  if (entry.state !== "blocked") {
+    throw new TypeError(`Task ${taskId} is not blocked`);
+  }
+  if (typeof reason !== "string" || reason.trim() === "") {
+    throw new TypeError(`Task ${taskId} blocker resolution requires a non-empty, explicit reason`);
+  }
+  entry.blockerResolved = true;
+  entry.blockerResolution = reason.trim();
   return { ...entry };
 }
 

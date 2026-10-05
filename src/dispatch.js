@@ -19,6 +19,21 @@ function abortError(reason = "Task cancelled") {
   return error;
 }
 
+/**
+ * Mark an error as an explicitly classified infrastructure fault (the dispatch
+ * module's own budget/timeout enforcement, not a worker, resolver, or verifier
+ * outcome). Only errors carrying this classification are eligible for retry.
+ */
+function infrastructureError(error) {
+  error.failureKind = "infrastructure";
+  error.retryable = true;
+  return error;
+}
+
+function isRetryableInfrastructureError(error) {
+  return Boolean(error) && error.failureKind === "infrastructure" && error.retryable === true;
+}
+
 async function runBoundedVerifier(verify, args, timeoutMs, signal) {
   const controller = new AbortController();
   let timeoutId;
@@ -36,7 +51,7 @@ async function runBoundedVerifier(verify, args, timeoutMs, signal) {
       controller.abort("Verification timed out");
       const error = new Error("Independent verification exceeded the task timeout");
       error.name = "TimeoutError";
-      reject(error);
+      reject(infrastructureError(error));
     }, timeoutMs);
   });
   try {
@@ -62,6 +77,7 @@ export async function dispatchTask(task, { worker, resolveModel, signal } = {}) 
   assertValidTask(task);
   if (typeof worker !== "function") throw new TypeError("worker must be a function");
   if (typeof resolveModel !== "function") throw new TypeError("resolveModel must be a function");
+  if (signal?.aborted) throw abortError(signal.reason || "Task cancelled");
 
   const controller = new AbortController();
   let timeoutId;
@@ -79,12 +95,11 @@ export async function dispatchTask(task, { worker, resolveModel, signal } = {}) 
       controller.abort("Task timed out");
       const error = new Error(`Task ${task.id} exceeded ${task.budget.timeoutMs}ms`);
       error.name = "TimeoutError";
-      reject(error);
+      reject(infrastructureError(error));
     }, task.budget.timeoutMs);
   });
 
   try {
-    if (signal?.aborted) throw abortError(signal.reason || "Task cancelled");
     const model = await Promise.race([
       Promise.resolve().then(() => resolveModel(task.routeTier, structuredClone(task))),
       timeout,
@@ -142,7 +157,12 @@ export async function dispatchReadyBatch(
         if (!verification || typeof verification.ok !== "boolean") {
           throw new TypeError("verify must return an object with boolean ok");
         }
-        transitionTask(plan, taskId, verification.ok ? "succeeded" : "failed");
+        transitionTask(
+          plan,
+          taskId,
+          verification.ok ? "succeeded" : "failed",
+          verification.ok ? undefined : { reason: "verifier-rejected", retryable: false },
+        );
         return {
           taskId,
           state: verification.ok ? "succeeded" : "failed",
@@ -152,7 +172,14 @@ export async function dispatchReadyBatch(
       } catch (error) {
         const current = plan.tasks.get(taskId)?.state;
         if (current === "running" || current === "verifying") {
-          transitionTask(plan, taskId, signal?.aborted ? "cancelled" : "failed");
+          transitionTask(
+            plan,
+            taskId,
+            signal?.aborted ? "cancelled" : "failed",
+            signal?.aborted
+              ? undefined
+              : { reason: error.name || "Error", retryable: isRetryableInfrastructureError(error) },
+          );
         }
         return {
           taskId,
