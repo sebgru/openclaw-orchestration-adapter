@@ -8,6 +8,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
       matrix:
         node-version: [22]
@@ -27,11 +29,11 @@ jobs:
         run: npm run test:coverage
 
       - name: Upload coverage to Codecov
-        # Only run when the repository secret is configured, so a fork or an
-        # unconfigured repository still gets a green test job.
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        # Skip when no token is configured so the job stays green; set the
+        # CODECOV_TOKEN repository secret to enable uploads.
+        if: ${{ env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
         with:
           files: coverage/lcov.info
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           fail_ci_if_error: true
