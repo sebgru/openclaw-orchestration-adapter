@@ -1,4 +1,48 @@
 {
-  "name": "OpenClaw Orchestration Adapter",
-  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm"
+  "name": "openclaw-orchestration-adapter",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "moby": false
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "remoteUser": "node",
+  "containerUser": "node",
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "mounts": [
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gitconfig,target=/tmp/host-gitconfig,type=bind,readonly",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh,target=/tmp/host-ssh,type=bind,readonly",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.config/gh,target=/tmp/host-gh-config,type=bind,readonly"
+  ],
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-vscode.vscode-typescript-next",
+        "tamasfe.even-better-toml",
+        "github.vscode-github-actions",
+        "streetsidesoftware.code-spell-checker",
+        "anthropic.claude-code"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "terminal.integrated.profiles.linux": {
+          "zsh": {
+            "path": "/bin/zsh",
+            "args": [
+              "-l"
+            ]
+          }
+        },
+        "editor.formatOnSave": true,
+        "editor.rulers": [
+          100
+        ]
+      }
+    }
+  }
 }
