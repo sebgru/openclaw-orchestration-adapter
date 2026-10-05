@@ -142,7 +142,12 @@ export async function dispatchReadyBatch(
         if (!verification || typeof verification.ok !== "boolean") {
           throw new TypeError("verify must return an object with boolean ok");
         }
-        transitionTask(plan, taskId, verification.ok ? "succeeded" : "failed");
+        transitionTask(
+          plan,
+          taskId,
+          verification.ok ? "succeeded" : "failed",
+          verification.ok ? undefined : { reason: "verifier-rejected", retryable: false },
+        );
         return {
           taskId,
           state: verification.ok ? "succeeded" : "failed",
@@ -152,7 +157,12 @@ export async function dispatchReadyBatch(
       } catch (error) {
         const current = plan.tasks.get(taskId)?.state;
         if (current === "running" || current === "verifying") {
-          transitionTask(plan, taskId, signal?.aborted ? "cancelled" : "failed");
+          transitionTask(
+            plan,
+            taskId,
+            signal?.aborted ? "cancelled" : "failed",
+            signal?.aborted ? undefined : { reason: error.name || "Error", retryable: true },
+          );
         }
         return {
           taskId,

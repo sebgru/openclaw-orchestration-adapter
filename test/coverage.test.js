@@ -11,6 +11,7 @@ import {
   isTaskState,
   normalizeMemoryReceipt,
   readyTaskIds,
+  resolveBlocker,
   transitionTask,
   validateTask,
 } from "../src/index.js";
@@ -122,17 +123,20 @@ test("createPlan handles diamond dependencies and transition guards", () => {
   assert.deepEqual(readyTaskIds(plan).sort(), ["left", "right"]);
 });
 
-test("failed and blocked tasks can be retried once dependencies are satisfied", () => {
+test("failed and blocked tasks can be retried once dependencies are satisfied and reasons are cleared", () => {
   const plan = createPlan([task("dep"), task("child", ["dep"])]);
   transitionTask(plan, "dep", "ready");
   transitionTask(plan, "dep", "running");
-  transitionTask(plan, "dep", "failed");
+  transitionTask(plan, "dep", "failed", { reason: "infra-timeout", retryable: true });
 
-  transitionTask(plan, "child", "blocked");
-  // A retry stays rejected while the task's own dependency is unresolved.
+  transitionTask(plan, "child", "blocked", { reason: "policy-hold" });
+  // A retry stays rejected while the task's own dependency is unresolved,
+  // even with the blocker explicitly resolved.
+  resolveBlocker(plan, "child", "operator cleared the hold");
   assert.throws(() => transitionTask(plan, "child", "ready"), /not ready/);
 
-  // Once the dependency succeeds, failed and blocked tasks can be re-queued.
+  // Once the dependency succeeds, a retryable infrastructure failure and a
+  // resolved blocker can both be re-queued.
   transitionTask(plan, "dep", "ready");
   transitionTask(plan, "dep", "running");
   transitionTask(plan, "dep", "verifying");
@@ -142,8 +146,94 @@ test("failed and blocked tasks can be retried once dependencies are satisfied", 
   const retry = createPlan([task("retry")]);
   transitionTask(retry, "retry", "ready");
   transitionTask(retry, "retry", "running");
-  transitionTask(retry, "retry", "failed");
+  transitionTask(retry, "retry", "failed", { reason: "infra-timeout", retryable: true });
   assert.equal(transitionTask(retry, "retry", "ready").state, "ready");
+});
+
+test("maxRetries=0 rejects any retry even for a recorded infrastructure failure", () => {
+  const zeroRetry = task("zero-retry");
+  zeroRetry.budget.maxRetries = 0;
+  const plan = createPlan([zeroRetry]);
+  transitionTask(plan, "zero-retry", "ready");
+  transitionTask(plan, "zero-retry", "running");
+  transitionTask(plan, "zero-retry", "failed", { reason: "infra-timeout", retryable: true });
+  assert.throws(
+    () => transitionTask(plan, "zero-retry", "ready"),
+    /exhausted its retry budget \(0\)/,
+  );
+});
+
+test("maxRetries=1 permits exactly one explicitly retryable infrastructure retry then rejects another", () => {
+  const plan = createPlan([task("one-retry")]);
+  transitionTask(plan, "one-retry", "ready");
+  transitionTask(plan, "one-retry", "running");
+  transitionTask(plan, "one-retry", "failed", { reason: "worker-crash", retryable: true });
+
+  assert.equal(transitionTask(plan, "one-retry", "ready").state, "ready");
+
+  transitionTask(plan, "one-retry", "running");
+  transitionTask(plan, "one-retry", "failed", { reason: "worker-crash-again", retryable: true });
+  assert.throws(
+    () => transitionTask(plan, "one-retry", "ready"),
+    /exhausted its retry budget \(1\)/,
+  );
+});
+
+test("a non-infrastructure failure (verifier rejection) cannot be retried", () => {
+  const plan = createPlan([task("verifier-rejected")]);
+  transitionTask(plan, "verifier-rejected", "ready");
+  transitionTask(plan, "verifier-rejected", "running");
+  transitionTask(plan, "verifier-rejected", "verifying");
+  transitionTask(plan, "verifier-rejected", "failed", {
+    reason: "verifier-rejected",
+    retryable: false,
+  });
+  assert.throws(
+    () => transitionTask(plan, "verifier-rejected", "ready"),
+    /without a recorded retryable infrastructure error/,
+  );
+
+  // Failing without any metadata at all defaults to non-retryable too.
+  const bare = createPlan([task("bare-failure")]);
+  transitionTask(bare, "bare-failure", "ready");
+  transitionTask(bare, "bare-failure", "running");
+  transitionTask(bare, "bare-failure", "failed");
+  assert.throws(
+    () => transitionTask(bare, "bare-failure", "ready"),
+    /without a recorded retryable infrastructure error/,
+  );
+});
+
+test("a blocked task cannot reopen without explicit resolution", () => {
+  const plan = createPlan([task("solo")]);
+  transitionTask(plan, "solo", "blocked", { reason: "awaiting-approval" });
+  assert.throws(
+    () => transitionTask(plan, "solo", "ready"),
+    /is blocked; resolve the blocker before retrying/,
+  );
+
+  resolveBlocker(plan, "solo", "approved");
+  assert.equal(transitionTask(plan, "solo", "ready").state, "ready");
+});
+
+test("a resolved blocker still requires satisfied dependencies before reopening", () => {
+  const plan = createPlan([task("dep"), task("child", ["dep"])]);
+  transitionTask(plan, "child", "blocked", { reason: "awaiting-approval" });
+  resolveBlocker(plan, "child", "approved");
+  // Resolving the blocker alone is not enough; dependencies must also succeed.
+  assert.throws(() => transitionTask(plan, "child", "ready"), /not ready/);
+
+  transitionTask(plan, "dep", "ready");
+  transitionTask(plan, "dep", "running");
+  transitionTask(plan, "dep", "verifying");
+  transitionTask(plan, "dep", "succeeded");
+  assert.equal(transitionTask(plan, "child", "ready").state, "ready");
+});
+
+test("resolveBlocker rejects tasks that are not currently blocked", () => {
+  const plan = createPlan([task("solo")]);
+  assert.throws(() => resolveBlocker(plan, "solo", "n/a"), /is not blocked/);
+  assert.throws(() => resolveBlocker(plan, "missing", "n/a"), /Unknown task ID/);
 });
 
 test("readyTaskIds tolerates references to unknown dependencies", () => {
