@@ -4,6 +4,8 @@ import {
   assertValidTask,
   cancelPlan,
   createPlan,
+  createMemoryEvidenceBrief,
+  dispatchReadyBatch,
   readyTaskIds,
   transitionTask,
   validateTask,
@@ -71,4 +73,127 @@ test("plan snapshots input and cancellation preserves completed tasks", () => {
   cancelPlan(plan);
   assert.equal(plan.tasks.get("first").state, "succeeded");
   assert.equal(plan.tasks.get("second").state, "cancelled");
+});
+
+test("dispatch is concurrency-capped, grant-scoped, and requires independent verification", async () => {
+  const plan = createPlan([task("one"), task("two"), task("three")]);
+  const calls = [];
+  const result = await dispatchReadyBatch(plan, {
+    maxParallel: 2,
+    resolveModel: async (tier) => `configured:${tier}`,
+    worker: async ({ task: dispatchedTask, grant, model }) => {
+      calls.push({ id: dispatchedTask.id, grant, model });
+      return { result: dispatchedTask.id };
+    },
+    verify: async (_task, output) => ({ ok: Boolean(output.result), evidence: "checked" }),
+  });
+
+  assert.equal(result.dispatched.length, 2);
+  assert.deepEqual(calls.map((call) => call.id), ["one", "two"]);
+  assert.deepEqual(calls[0].grant.allowedTools, ["read"]);
+  assert.equal(calls[0].grant.mayDelegate, false);
+  assert.equal(calls[0].model, "configured:standard");
+  assert.deepEqual(readyTaskIds(plan), ["three"]);
+  assert.equal(plan.tasks.get("one").state, "succeeded");
+});
+
+test("failed verification never marks a task successful", async () => {
+  const plan = createPlan([task("one")]);
+  const result = await dispatchReadyBatch(plan, {
+    resolveModel: () => "configured:model",
+    worker: async () => ({ unverified: true }),
+    verify: async () => ({ ok: false, evidence: "criterion not met" }),
+  });
+  assert.equal(result.dispatched[0].state, "failed");
+  assert.equal(plan.tasks.get("one").state, "failed");
+});
+
+test("task timeout aborts the worker and records failure", async () => {
+  const bounded = task("slow");
+  bounded.budget.timeoutMs = 10;
+  const plan = createPlan([bounded]);
+  const result = await dispatchReadyBatch(plan, {
+    resolveModel: () => "configured:model",
+    worker: ({ signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+    }),
+    verify: async () => ({ ok: true }),
+  });
+  assert.equal(result.dispatched[0].state, "failed");
+  assert.equal(result.dispatched[0].error.name, "TimeoutError");
+});
+
+test("plan cancellation propagates to workers", async () => {
+  const plan = createPlan([task("cancel-me")]);
+  const controller = new AbortController();
+  const pending = dispatchReadyBatch(plan, {
+    resolveModel: () => "configured:model",
+    worker: ({ signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+      controller.abort("owner cancelled");
+    }),
+    verify: async () => ({ ok: true }),
+    signal: controller.signal,
+  });
+  const result = await pending;
+  assert.equal(result.cancelled, true);
+  assert.equal(plan.tasks.get("cancel-me").state, "cancelled");
+});
+
+test("memory brief fails closed without a known versioned receipt", () => {
+  const missing = createMemoryEvidenceBrief(null, "secret or unverified content");
+  assert.equal(missing.status, "unavailable");
+  assert.equal(missing.evidence, null);
+
+  const future = createMemoryEvidenceBrief({ schemaVersion: 99 }, "unverified content");
+  assert.equal(future.reason, "missing-or-invalid-receipt");
+  assert.equal(future.evidence, null);
+});
+
+test("memory evidence is bounded and explicitly marked untrusted", () => {
+  const receipt = {
+    schemaVersion: 2,
+    turnId: "turn-123",
+    status: "found",
+    resultCount: 2,
+    includedCount: 2,
+    sources: { searched: ["main"], absent: [], unavailable: [], notSearched: ["archive", "documents"], unknownCoverage: [] },
+    warnings: [],
+    conflicts: [],
+    truncated: false,
+    partialCoverage: false,
+    noContentIncluded: false,
+  };
+  const brief = createMemoryEvidenceBrief(receipt, "A".repeat(25), { maxChars: 12 });
+  assert.equal(brief.status, "found");
+  assert.equal(brief.evidence.trust, "untrusted-evidence");
+  assert.equal(brief.evidence.instructionsAllowed, false);
+  assert.equal(brief.evidence.text.length, 12);
+  assert.equal(brief.evidence.truncated, true);
+});
+
+test("absent and unavailable receipts never forward retrieval content", () => {
+  const base = {
+    schemaVersion: 2,
+    turnId: "turn-123",
+    resultCount: 0,
+    includedCount: 0,
+    sources: { searched: [], absent: ["main", "archive", "documents"], unavailable: [], notSearched: [], unknownCoverage: [] },
+    warnings: [],
+    conflicts: [],
+    truncated: false,
+    partialCoverage: false,
+    noContentIncluded: false,
+  };
+  const absent = createMemoryEvidenceBrief({ ...base, status: "absent" }, "should be ignored");
+  assert.equal(absent.status, "absent");
+  assert.equal(absent.evidence, null);
+
+  const unavailable = createMemoryEvidenceBrief({
+    ...base,
+    status: "unavailable",
+    sources: { searched: [], absent: [], unavailable: ["main", "archive", "documents"], notSearched: [], unknownCoverage: [] },
+  }, "should be ignored");
+  assert.equal(unavailable.status, "unavailable");
+  assert.equal(unavailable.evidence, null);
 });

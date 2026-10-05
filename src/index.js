@@ -10,3 +10,5 @@ export {
   readyTaskIds,
   transitionTask,
 } from "./plan.js";
+export { dispatchReadyBatch, dispatchTask } from "./dispatch.js";
+export { createMemoryEvidenceBrief, normalizeMemoryReceipt } from "./memory-receipt.js";
