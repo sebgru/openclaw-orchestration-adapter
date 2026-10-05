@@ -376,6 +376,11 @@ test("dispatchReadyBatch records verifier exceptions and non-Error rejections", 
   assert.equal(thrown.dispatched[0].state, "failed");
   assert.equal(thrown.dispatched[0].error.name, "Error");
   assert.equal(thrown.dispatched[0].error.message, "verifier exploded");
+  assert.equal(thrower.tasks.get("throws").retryable, false);
+  assert.throws(
+    () => transitionTask(thrower, "throws", "ready"),
+    /without a recorded retryable infrastructure error/,
+  );
 
   const plain = createPlan([task("plain")]);
   const rejected = await dispatchReadyBatch(plain, {
@@ -386,6 +391,58 @@ test("dispatchReadyBatch records verifier exceptions and non-Error rejections", 
   assert.equal(rejected.dispatched[0].state, "failed");
   assert.equal(rejected.dispatched[0].error.name, "Error");
   assert.equal(rejected.dispatched[0].error.message, "plain failure");
+  assert.equal(plain.tasks.get("plain").retryable, false);
+});
+
+test("dispatchReadyBatch never marks arbitrary worker or resolveModel errors as retryable", async () => {
+  const workerThrows = createPlan([task("worker-throws")]);
+  const workerResult = await dispatchReadyBatch(workerThrows, {
+    resolveModel: async () => "model",
+    worker: async () => {
+      throw new Error("worker contract violation");
+    },
+    verify: async () => ({ ok: true }),
+  });
+  assert.equal(workerResult.dispatched[0].state, "failed");
+  assert.equal(workerThrows.tasks.get("worker-throws").retryable, false);
+  assert.throws(
+    () => transitionTask(workerThrows, "worker-throws", "ready"),
+    /without a recorded retryable infrastructure error/,
+  );
+
+  const resolverThrows = createPlan([task("resolver-throws")]);
+  const resolverResult = await dispatchReadyBatch(resolverThrows, {
+    resolveModel: async () => {
+      throw new Error("no route configured");
+    },
+    worker: async () => ({ result: "ok" }),
+    verify: async () => ({ ok: true }),
+  });
+  assert.equal(resolverResult.dispatched[0].state, "failed");
+  assert.equal(resolverThrows.tasks.get("resolver-throws").retryable, false);
+});
+
+test("dispatchReadyBatch marks an explicitly classified infrastructure error as retryable within budget", async () => {
+  const plan = createPlan([task("infra-flaky")]);
+  const infraFailingWorker = async () => {
+    const error = new Error("upstream connection reset");
+    error.name = "InfrastructureError";
+    error.failureKind = "infrastructure";
+    error.retryable = true;
+    throw error;
+  };
+
+  const first = await dispatchReadyBatch(plan, {
+    resolveModel: async () => "model",
+    worker: infraFailingWorker,
+    verify: async () => ({ ok: true }),
+  });
+  assert.equal(first.dispatched[0].state, "failed");
+  assert.equal(plan.tasks.get("infra-flaky").retryable, true);
+
+  // Unlike verifier rejections or unclassified errors, an explicitly
+  // classified infrastructure failure is eligible for retry within budget.
+  assert.equal(transitionTask(plan, "infra-flaky", "ready").state, "ready");
 });
 
 test("independent verification is bounded by the task timeout", async () => {
