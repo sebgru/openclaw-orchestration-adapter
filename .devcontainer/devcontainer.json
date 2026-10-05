@@ -12,11 +12,12 @@
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "mounts": [
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gitconfig,target=/tmp/host-gitconfig,type=bind,readonly",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh,target=/tmp/host-ssh,type=bind,readonly",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.config/gh,target=/tmp/host-gh-config,type=bind,readonly"
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gitconfig,target=/home/node/.gitconfig,type=bind,consistency=cached",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh,target=/home/node/.ssh,type=bind,consistency=cached",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.config/gh,target=/home/node/.config/gh,type=bind,consistency=cached"
   ],
   "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postStartCommand": "gh auth status || echo 'WARNING: gh is not logged in - run gh auth login'",
   "customizations": {
     "vscode": {
       "extensions": [
