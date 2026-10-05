@@ -62,6 +62,7 @@ export async function dispatchTask(task, { worker, resolveModel, signal } = {}) 
   assertValidTask(task);
   if (typeof worker !== "function") throw new TypeError("worker must be a function");
   if (typeof resolveModel !== "function") throw new TypeError("resolveModel must be a function");
+  if (signal?.aborted) throw abortError(signal.reason || "Task cancelled");
 
   const controller = new AbortController();
   let timeoutId;
@@ -84,7 +85,6 @@ export async function dispatchTask(task, { worker, resolveModel, signal } = {}) 
   });
 
   try {
-    if (signal?.aborted) throw abortError(signal.reason || "Task cancelled");
     const model = await Promise.race([
       Promise.resolve().then(() => resolveModel(task.routeTier, structuredClone(task))),
       timeout,

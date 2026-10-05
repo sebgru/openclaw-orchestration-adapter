@@ -122,20 +122,28 @@ test("createPlan handles diamond dependencies and transition guards", () => {
   assert.deepEqual(readyTaskIds(plan).sort(), ["left", "right"]);
 });
 
-test("failed and blocked tasks follow the declared transition limits", () => {
-  const failedPlan = createPlan([task("fail")]);
-  transitionTask(failedPlan, "fail", "ready");
-  transitionTask(failedPlan, "fail", "running");
-  transitionTask(failedPlan, "fail", "failed");
-  // `failed -> ready` is declared but guarded by dependency readiness, which
-  // only considers `pending` tasks, so it is rejected in practice.
-  assert.throws(() => transitionTask(failedPlan, "fail", "ready"), /not ready/);
-  assert.throws(() => transitionTask(failedPlan, "fail", "cancelled"), /Invalid task transition/);
+test("failed and blocked tasks can be retried once dependencies are satisfied", () => {
+  const plan = createPlan([task("dep"), task("child", ["dep"])]);
+  transitionTask(plan, "dep", "ready");
+  transitionTask(plan, "dep", "running");
+  transitionTask(plan, "dep", "failed");
 
-  const blockedPlan = createPlan([task("block")]);
-  transitionTask(blockedPlan, "block", "blocked");
-  transitionTask(blockedPlan, "block", "cancelled");
-  assert.equal(blockedPlan.tasks.get("block").state, "cancelled");
+  transitionTask(plan, "child", "blocked");
+  // A retry stays rejected while the task's own dependency is unresolved.
+  assert.throws(() => transitionTask(plan, "child", "ready"), /not ready/);
+
+  // Once the dependency succeeds, failed and blocked tasks can be re-queued.
+  transitionTask(plan, "dep", "ready");
+  transitionTask(plan, "dep", "running");
+  transitionTask(plan, "dep", "verifying");
+  transitionTask(plan, "dep", "succeeded");
+  assert.equal(transitionTask(plan, "child", "ready").state, "ready");
+
+  const retry = createPlan([task("retry")]);
+  transitionTask(retry, "retry", "ready");
+  transitionTask(retry, "retry", "running");
+  transitionTask(retry, "retry", "failed");
+  assert.equal(transitionTask(retry, "retry", "ready").state, "ready");
 });
 
 test("readyTaskIds tolerates references to unknown dependencies", () => {
@@ -194,6 +202,21 @@ test("dispatchTask propagates cancellation from the caller signal", async () => 
   await started;
   controller.abort("stop now");
   await assert.rejects(pending, (error) => error.name === "AbortError");
+});
+
+test("dispatchTask rejects immediately on an already-aborted signal", async () => {
+  const controller = new AbortController();
+  controller.abort("stop now");
+  // Must not emit an unhandled rejection from an internal cancellation promise.
+  await assert.rejects(
+    () =>
+      dispatchTask(task("pre-aborted"), {
+        worker: async () => ({ result: "never runs" }),
+        resolveModel: async () => "model",
+        signal: controller.signal,
+      }),
+    (error) => error.name === "AbortError" && error.message === "stop now",
+  );
 });
 
 test("dispatchTask surfaces worker failures", async () => {

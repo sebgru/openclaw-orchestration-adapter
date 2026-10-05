@@ -53,14 +53,15 @@ export function createPlan(tasks) {
   };
 }
 
+/** True when every dependency of a task has already succeeded. */
+function dependenciesSatisfied(plan, entry) {
+  return entry.contract.dependencies.every((id) => plan.tasks.get(id)?.state === "succeeded");
+}
+
 /** Return pending task IDs whose dependencies have all succeeded. */
 export function readyTaskIds(plan) {
   return [...plan.tasks]
-    .filter(
-      ([, entry]) =>
-        entry.state === "pending" &&
-        entry.contract.dependencies.every((id) => plan.tasks.get(id)?.state === "succeeded"),
-    )
+    .filter(([, entry]) => entry.state === "pending" && dependenciesSatisfied(plan, entry))
     .map(([id]) => id);
 }
 
@@ -72,7 +73,7 @@ export function transitionTask(plan, taskId, nextState) {
   if (!ALLOWED_TRANSITIONS[entry.state].has(nextState)) {
     throw new TypeError(`Invalid task transition: ${entry.state} -> ${nextState}`);
   }
-  if (nextState === "ready" && !readyTaskIds(plan).includes(taskId)) {
+  if (nextState === "ready" && !dependenciesSatisfied(plan, entry)) {
     throw new TypeError(`Task ${taskId} is not ready; dependencies have not succeeded`);
   }
   entry.state = nextState;
