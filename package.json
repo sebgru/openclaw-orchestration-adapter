@@ -1,0 +1,17 @@
+{
+  "name": "openclaw-orchestration-adapter",
+  "version": "0.1.0",
+  "description": "Least-privilege orchestration for OpenClaw agents",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/index.js && node --check src/plan.js && node --check src/contracts.js"
+  },
+  "license": "MIT"
+}
