@@ -7,16 +7,16 @@ const MAX_CRITERIA = 20;
 const MAX_GRANTS = 32;
 
 /** Assemble a bounded, provenance-bearing worker brief without granting authority. */
-export function createWorkerBrief(task, {
-  memoryReceipt,
-  memoryContent,
-  maxChars = 12_000,
-} = {}) {
+export function createWorkerBrief(task, { memoryReceipt, memoryContent, maxChars = 12_000 } = {}) {
   assertValidTask(task);
   if (!Number.isInteger(maxChars) || maxChars < 1 || maxChars > MAX_BRIEF_CHARS) {
     throw new RangeError(`maxChars must be an integer from 1 to ${MAX_BRIEF_CHARS}`);
   }
-  if (task.goal.length > MAX_GOAL_CHARS || task.successCriteria.length > MAX_CRITERIA || task.allowedTools.length > MAX_GRANTS) {
+  if (
+    task.goal.length > MAX_GOAL_CHARS ||
+    task.successCriteria.length > MAX_CRITERIA ||
+    task.allowedTools.length > MAX_GRANTS
+  ) {
     throw new RangeError("Task brief exceeds structural limits");
   }
 

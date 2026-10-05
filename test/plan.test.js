@@ -89,7 +89,10 @@ test("dispatch is concurrency-capped, grant-scoped, and requires independent ver
   });
 
   assert.equal(result.dispatched.length, 2);
-  assert.deepEqual(calls.map((call) => call.id), ["one", "two"]);
+  assert.deepEqual(
+    calls.map((call) => call.id),
+    ["one", "two"],
+  );
   assert.deepEqual(calls[0].grant.allowedTools, ["read"]);
   assert.equal(calls[0].grant.mayDelegate, false);
   assert.equal(calls[0].model, "configured:standard");
@@ -114,9 +117,14 @@ test("task timeout aborts the worker and records failure", async () => {
   const plan = createPlan([bounded]);
   const result = await dispatchReadyBatch(plan, {
     resolveModel: () => "configured:model",
-    worker: ({ signal }) => new Promise((resolve, reject) => {
-      signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
-    }),
+    worker: ({ signal }) =>
+      new Promise((resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+          { once: true },
+        );
+      }),
     verify: async () => ({ ok: true }),
   });
   assert.equal(result.dispatched[0].state, "failed");
@@ -128,10 +136,15 @@ test("plan cancellation propagates to workers", async () => {
   const controller = new AbortController();
   const pending = dispatchReadyBatch(plan, {
     resolveModel: () => "configured:model",
-    worker: ({ signal }) => new Promise((resolve, reject) => {
-      signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
-      controller.abort("owner cancelled");
-    }),
+    worker: ({ signal }) =>
+      new Promise((resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+          { once: true },
+        );
+        controller.abort("owner cancelled");
+      }),
     verify: async () => ({ ok: true }),
     signal: controller.signal,
   });
@@ -157,7 +170,13 @@ test("memory evidence is bounded and explicitly marked untrusted", () => {
     status: "found",
     resultCount: 2,
     includedCount: 2,
-    sources: { searched: ["main"], absent: [], unavailable: [], notSearched: ["archive", "documents"], unknownCoverage: [] },
+    sources: {
+      searched: ["main"],
+      absent: [],
+      unavailable: [],
+      notSearched: ["archive", "documents"],
+      unknownCoverage: [],
+    },
     warnings: [],
     conflicts: [],
     truncated: false,
@@ -178,7 +197,13 @@ test("absent and unavailable receipts never forward retrieval content", () => {
     turnId: "turn-123",
     resultCount: 0,
     includedCount: 0,
-    sources: { searched: [], absent: ["main", "archive", "documents"], unavailable: [], notSearched: [], unknownCoverage: [] },
+    sources: {
+      searched: [],
+      absent: ["main", "archive", "documents"],
+      unavailable: [],
+      notSearched: [],
+      unknownCoverage: [],
+    },
     warnings: [],
     conflicts: [],
     truncated: false,
@@ -189,11 +214,20 @@ test("absent and unavailable receipts never forward retrieval content", () => {
   assert.equal(absent.status, "absent");
   assert.equal(absent.evidence, null);
 
-  const unavailable = createMemoryEvidenceBrief({
-    ...base,
-    status: "unavailable",
-    sources: { searched: [], absent: [], unavailable: ["main", "archive", "documents"], notSearched: [], unknownCoverage: [] },
-  }, "should be ignored");
+  const unavailable = createMemoryEvidenceBrief(
+    {
+      ...base,
+      status: "unavailable",
+      sources: {
+        searched: [],
+        absent: [],
+        unavailable: ["main", "archive", "documents"],
+        notSearched: [],
+        unknownCoverage: [],
+      },
+    },
+    "should be ignored",
+  );
   assert.equal(unavailable.status, "unavailable");
   assert.equal(unavailable.evidence, null);
 });
@@ -222,10 +256,24 @@ test("worker brief carries only bounded untrusted memory evidence with receipt p
     status: "found",
     resultCount: 1,
     includedCount: 1,
-    sources: { searched: ["main"], absent: [], unavailable: [], notSearched: ["archive", "documents"], unknownCoverage: [] },
-    warnings: [], conflicts: [], truncated: false, partialCoverage: false, noContentIncluded: false,
+    sources: {
+      searched: ["main"],
+      absent: [],
+      unavailable: [],
+      notSearched: ["archive", "documents"],
+      unknownCoverage: [],
+    },
+    warnings: [],
+    conflicts: [],
+    truncated: false,
+    partialCoverage: false,
+    noContentIncluded: false,
   };
-  const brief = createWorkerBrief(task("brief"), { memoryReceipt: receipt, memoryContent: "source text", maxChars: 5 });
+  const brief = createWorkerBrief(task("brief"), {
+    memoryReceipt: receipt,
+    memoryContent: "source text",
+    maxChars: 5,
+  });
   assert.equal(brief.memory.evidence.text, "sourc");
   assert.equal(brief.memory.evidence.trust, "untrusted-evidence");
   assert.equal(brief.memory.evidence.instructionsAllowed, false);

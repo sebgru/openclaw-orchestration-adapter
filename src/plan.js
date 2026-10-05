@@ -14,20 +14,25 @@ const ALLOWED_TRANSITIONS = {
 
 /** Build a transient plan, rejecting duplicate IDs, missing dependencies, and cycles. */
 export function createPlan(tasks) {
-  if (!Array.isArray(tasks) || tasks.length === 0) throw new TypeError("A plan needs at least one task");
+  if (!Array.isArray(tasks) || tasks.length === 0)
+    throw new TypeError("A plan needs at least one task");
 
   const byId = new Map();
   for (const task of tasks) {
     assertValidTask(task);
     if (byId.has(task.id)) throw new TypeError(`Duplicate task ID: ${task.id}`);
     const snapshot = structuredClone(task);
-    byId.set(task.id, Object.freeze({ ...snapshot, dependencies: [...(snapshot.dependencies ?? [])] }));
+    byId.set(
+      task.id,
+      Object.freeze({ ...snapshot, dependencies: [...(snapshot.dependencies ?? [])] }),
+    );
   }
 
   for (const task of byId.values()) {
     for (const dependency of task.dependencies) {
       if (dependency === task.id) throw new TypeError(`Task ${task.id} cannot depend on itself`);
-      if (!byId.has(dependency)) throw new TypeError(`Task ${task.id} has unknown dependency ${dependency}`);
+      if (!byId.has(dependency))
+        throw new TypeError(`Task ${task.id} has unknown dependency ${dependency}`);
     }
   }
 
@@ -51,7 +56,11 @@ export function createPlan(tasks) {
 /** Return pending task IDs whose dependencies have all succeeded. */
 export function readyTaskIds(plan) {
   return [...plan.tasks]
-    .filter(([, entry]) => entry.state === "pending" && entry.contract.dependencies.every((id) => plan.tasks.get(id)?.state === "succeeded"))
+    .filter(
+      ([, entry]) =>
+        entry.state === "pending" &&
+        entry.contract.dependencies.every((id) => plan.tasks.get(id)?.state === "succeeded"),
+    )
     .map(([id]) => id);
 }
 
