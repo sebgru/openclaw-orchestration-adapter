@@ -31,7 +31,11 @@ export function validateTask(task) {
   if (task.contractVersion !== TASK_CONTRACT_VERSION) errors.push("contractVersion must be 1");
   if (!nonEmptyString(task.id)) errors.push("id must be a non-empty string");
   if (!nonEmptyString(task.goal)) errors.push("goal must be a non-empty string");
-  if (!Array.isArray(task.successCriteria) || task.successCriteria.length === 0 || !task.successCriteria.every(nonEmptyString)) {
+  if (
+    !Array.isArray(task.successCriteria) ||
+    task.successCriteria.length === 0 ||
+    !task.successCriteria.every(nonEmptyString)
+  ) {
     errors.push("successCriteria must contain one or more non-empty strings");
   }
   if (!Array.isArray(task.allowedTools) || !task.allowedTools.every(nonEmptyString)) {
@@ -53,11 +57,19 @@ export function validateTask(task) {
       errors.push("budget.maxRetries must be 0 or 1");
     }
   }
-  if (!isRecord(task.scope) || !nonEmptyString(task.scope.tenantId) || !nonEmptyString(task.scope.channel) || !nonEmptyString(task.scope.conversationId)) {
+  if (
+    !isRecord(task.scope) ||
+    !nonEmptyString(task.scope.tenantId) ||
+    !nonEmptyString(task.scope.channel) ||
+    !nonEmptyString(task.scope.conversationId)
+  ) {
     errors.push("scope must include opaque tenantId, channel, and conversationId values");
   }
   if (!isRecord(task.outputSchema)) errors.push("outputSchema must be a JSON Schema object");
-  if (task.dependencies !== undefined && (!Array.isArray(task.dependencies) || !task.dependencies.every(nonEmptyString))) {
+  if (
+    task.dependencies !== undefined &&
+    (!Array.isArray(task.dependencies) || !task.dependencies.every(nonEmptyString))
+  ) {
     errors.push("dependencies must be an array of task IDs");
   }
   return errors;
