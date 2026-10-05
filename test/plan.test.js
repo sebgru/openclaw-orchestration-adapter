@@ -197,3 +197,38 @@ test("absent and unavailable receipts never forward retrieval content", () => {
   assert.equal(unavailable.status, "unavailable");
   assert.equal(unavailable.evidence, null);
 });
+
+test("worker brief preserves task provenance and grants while failing closed on absent receipts", async () => {
+  const { createWorkerBrief } = await import("../src/index.js");
+  const source = task("brief");
+  const brief = createWorkerBrief(source, {
+    memoryReceipt: null,
+    memoryContent: "must not cross the boundary",
+  });
+  assert.equal(brief.schemaVersion, 1);
+  assert.equal(brief.task.id, "brief");
+  assert.equal(brief.authority.mayDelegate, false);
+  assert.deepEqual(brief.authority.allowedTools, ["read"]);
+  assert.equal(brief.memory.status, "unavailable");
+  assert.equal(brief.memory.evidence, null);
+  assert.equal(brief.provenance.memoryReceiptSchemaVersion, null);
+});
+
+test("worker brief carries only bounded untrusted memory evidence with receipt provenance", async () => {
+  const { createWorkerBrief } = await import("../src/index.js");
+  const receipt = {
+    schemaVersion: 2,
+    turnId: "turn-from-owner",
+    status: "found",
+    resultCount: 1,
+    includedCount: 1,
+    sources: { searched: ["main"], absent: [], unavailable: [], notSearched: ["archive", "documents"], unknownCoverage: [] },
+    warnings: [], conflicts: [], truncated: false, partialCoverage: false, noContentIncluded: false,
+  };
+  const brief = createWorkerBrief(task("brief"), { memoryReceipt: receipt, memoryContent: "source text", maxChars: 5 });
+  assert.equal(brief.memory.evidence.text, "sourc");
+  assert.equal(brief.memory.evidence.trust, "untrusted-evidence");
+  assert.equal(brief.memory.evidence.instructionsAllowed, false);
+  assert.equal(brief.provenance.memoryTurnId, "turn-from-owner");
+  assert.deepEqual(brief.provenance.memorySources.searched, ["main"]);
+});

@@ -12,3 +12,5 @@ export {
 } from "./plan.js";
 export { dispatchReadyBatch, dispatchTask } from "./dispatch.js";
 export { createMemoryEvidenceBrief, normalizeMemoryReceipt } from "./memory-receipt.js";
+
+export { createWorkerBrief } from "./worker-brief.js";

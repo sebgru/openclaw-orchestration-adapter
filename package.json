@@ -11,7 +11,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/index.js && node --check src/plan.js && node --check src/contracts.js && node --check src/dispatch.js && node --check src/memory-receipt.js"
+    "check": "node --check src/index.js && node --check src/plan.js && node --check src/contracts.js && node --check src/dispatch.js && node --check src/memory-receipt.js && node --check src/worker-brief.js"
   },
   "license": "MIT"
 }
