@@ -308,7 +308,9 @@ test("a held call is blocked when admission never confirms, or the binding is re
   });
   assert.match(timedOut.blockReason, /not yet confirmed/);
 
-  const g = new ToolGuard({ admissionWaitMs: 5000 });
+  // Keep the deadline short: the guard intentionally unrefs its timeout, so
+  // a long pending waiter alone does not keep Node's test worker alive.
+  const g = new ToolGuard({ admissionWaitMs: 20 });
   g.bind({ sessionKey: KEY, taskId: "t", allowedTools: ["read"], budget });
   const held = g.checkWhenAdmitted({ sessionKey: KEY, runId: "run-1", toolName: "read" });
   g.release(KEY);
