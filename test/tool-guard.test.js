@@ -301,11 +301,15 @@ test("contract: run() resolves at admission; a tool call racing confirm() is hel
 test("a held call is blocked when admission never confirms, or the binding is released", async () => {
   const slow = new ToolGuard({ admissionWaitMs: 20 });
   slow.bind({ sessionKey: KEY, taskId: "t", allowedTools: ["read"], budget });
+  // The production timer is intentionally unref'ed. Keep this test worker alive
+  // while asserting the timeout path, including under c8/CI.
+  const keepAlive = setTimeout(() => {}, 100);
   const timedOut = await slow.checkWhenAdmitted({
     sessionKey: KEY,
     runId: "run-1",
     toolName: "read",
   });
+  clearTimeout(keepAlive);
   assert.match(timedOut.blockReason, /not yet confirmed/);
 
   // Keep the deadline short: the guard intentionally unrefs its timeout, so
