@@ -1,3 +1,4 @@
+import { dispatchReadyBatch, dispatchTask } from "./dispatch.js";
 import { ToolGuard } from "./tool-guard.js";
 import { createBoundWorker } from "./worker-runtime.js";
 
@@ -9,7 +10,7 @@ import { createBoundWorker } from "./worker-runtime.js";
  * and handler errors/timeouts fail closed; native Codex/CLI tool relays support
  * blocking but this is verified only from docs, not by a live run.
  */
-export function registerOrchestration(api, { guard = new ToolGuard() } = {}) {
+export function registerOrchestration(api, { guard = new ToolGuard(), agentId } = {}) {
   api.on(
     "before_tool_call",
     (event, ctx) =>
@@ -20,11 +21,31 @@ export function registerOrchestration(api, { guard = new ToolGuard() } = {}) {
       }),
     { priority: 1000 },
   );
-  return {
+  const createWorker = ({ agentId: id = agentId, buildMessage } = {}) =>
+    createBoundWorker({ subagent: api.runtime.subagent, guard, agentId: id, buildMessage });
+  const handle = {
     guard,
-    createWorker: ({ agentId, buildMessage }) =>
-      createBoundWorker({ subagent: api.runtime.subagent, guard, agentId, buildMessage }),
+    createWorker,
+    /** Public dispatch entry: one validated task through a guard-bound worker. */
+    dispatchTask: (task, { resolveModel, signal, agentId: id, buildMessage } = {}) =>
+      dispatchTask(task, {
+        worker: createWorker({ agentId: id, buildMessage }),
+        resolveModel,
+        signal,
+      }),
+    /** Public dispatch entry: one dependency-ready wave with independent verification. */
+    dispatchReadyBatch: (plan, { agentId: id, buildMessage, ...options } = {}) =>
+      dispatchReadyBatch(plan, { ...options, worker: createWorker({ agentId: id, buildMessage }) }),
   };
+  handles.set(api, handle);
+  return handle;
+}
+
+const handles = new WeakMap();
+
+/** The handle created by register() for this plugin API, or undefined when inactive. */
+export function getOrchestration(api) {
+  return handles.get(api);
 }
 
 export default {
@@ -32,6 +53,6 @@ export default {
   name: "Orchestration Adapter",
   register(api) {
     if (api.pluginConfig?.enabled !== true) return;
-    registerOrchestration(api);
+    registerOrchestration(api, { agentId: api.pluginConfig.agentId });
   },
 };

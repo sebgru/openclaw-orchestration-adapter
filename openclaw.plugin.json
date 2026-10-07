@@ -7,7 +7,8 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "enabled": { "type": "boolean", "default": false }
+      "enabled": { "type": "boolean", "default": false },
+      "agentId": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
     }
   }
 }

@@ -6,4 +6,4 @@ export { createMemoryEvidenceBrief, normalizeMemoryReceipt } from "./memory-rece
 export { createWorkerBrief } from "./worker-brief.js";
 export { DELEGATION_TOOLS, WORKER_SESSION_MARKER, ToolGuard } from "./tool-guard.js";
 export { createBoundWorker } from "./worker-runtime.js";
-export { default as plugin, registerOrchestration } from "./plugin.js";
+export { default as plugin, getOrchestration, registerOrchestration } from "./plugin.js";

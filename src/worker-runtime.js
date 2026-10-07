@@ -28,6 +28,13 @@ function lastAssistantText(messages) {
  *   binding is always released (and the session deleted best-effort) on
  *   completion, timeout, or abort.
  *
+ * Cancellation limit: api.runtime.subagent has no cancel/abort call, waitForRun()
+ * timeouts do not cancel the run, and deleteSession() is not documented to stop
+ * an in-flight run. On abort, timeout, or error the only guaranteed action is
+ * revoking the binding, which makes every later before_tool_call in that
+ * session a terminal block (fail closed). The model run itself may keep going
+ * until the host ends it; its output is discarded.
+ *
  * toolsAlsoAllow is deliberately never used: it is additive, not a ceiling.
  * The ceiling is the before_tool_call guard in plugin.js.
  */
