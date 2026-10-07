@@ -1,5 +1,6 @@
 export const TASK_CONTRACT_VERSION = 1;
 
+const TASK_MODES = new Set(["tools", "completion"]);
 const ROUTE_TIERS = new Set(["cheap", "standard", "strong"]);
 const TASK_STATES = new Set([
   "pending",
@@ -43,6 +44,12 @@ export function validateTask(task) {
   }
   if (!Array.isArray(task.prohibitedActions) || !task.prohibitedActions.every(nonEmptyString)) {
     errors.push("prohibitedActions must be an array of non-empty strings");
+  }
+  if (task.mode !== undefined && !TASK_MODES.has(task.mode)) {
+    errors.push("mode must be tools or completion");
+  }
+  if (task.mode === "completion" && Array.isArray(task.allowedTools) && task.allowedTools.length) {
+    errors.push("completion mode must not grant tools");
   }
   if (!ROUTE_TIERS.has(task.routeTier)) errors.push("routeTier must be cheap, standard, or strong");
   if (!isRecord(task.budget)) {

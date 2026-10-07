@@ -1,0 +1,13 @@
+{
+  "id": "openclaw-orchestration-adapter",
+  "name": "Orchestration Adapter",
+  "description": "Least-privilege worker dispatch: per-run tool grants enforced by before_tool_call.",
+  "activation": { "onStartup": false },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean", "default": false }
+    }
+  }
+}
