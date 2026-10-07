@@ -16,7 +16,9 @@
   },
   "files": [
     "src",
+    "skills",
     "openclaw.plugin.json",
+    "NOTICE",
     "README.md",
     "LICENSE"
   ],

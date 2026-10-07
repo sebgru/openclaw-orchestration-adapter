@@ -2,6 +2,23 @@
   "id": "openclaw-orchestration-adapter",
   "name": "Orchestration Adapter",
   "description": "Least-privilege worker dispatch: per-run tool grants enforced by before_tool_call.",
+  "skills": [
+    "skills/requesting-code-review",
+    "skills/channel-context-bridge",
+    "skills/expansion-grant-guard",
+    "skills/task-handoff",
+    "skills/loop-circuit-breaker",
+    "skills/writing-plans",
+    "skills/workflow-orchestration",
+    "skills/dispatching-parallel-agents",
+    "skills/executing-plans",
+    "skills/quality-gate-orchestrator",
+    "skills/spend-circuit-breaker",
+    "skills/long-running-task-management",
+    "skills/verification-before-completion",
+    "skills/multi-agent-coordinator",
+    "skills/subagent-driven-development"
+  ],
   "activation": { "onStartup": false },
   "configSchema": {
     "type": "object",

@@ -101,15 +101,33 @@ test("manifest declares only documented fields and an agentId pattern", () => {
 test("packaging metadata ships the manifest and any declared skill directory", () => {
   assert.ok(pkg.files.includes("openclaw.plugin.json"));
   assert.ok(pkg.files.includes("src"));
-  // `skills` (string[], plugin-root-relative) is a documented manifest field. None are
-  // declared here; skills are authored separately. If one is added it must be
-  // relative, exist, and be packaged.
-  for (const dir of manifest.skills ?? []) {
+  assert.ok(pkg.files.includes("skills"));
+  assert.ok(pkg.files.includes("NOTICE"));
+  const expectedSkills = [
+    "skills/requesting-code-review",
+    "skills/channel-context-bridge",
+    "skills/expansion-grant-guard",
+    "skills/task-handoff",
+    "skills/loop-circuit-breaker",
+    "skills/writing-plans",
+    "skills/workflow-orchestration",
+    "skills/dispatching-parallel-agents",
+    "skills/executing-plans",
+    "skills/quality-gate-orchestrator",
+    "skills/spend-circuit-breaker",
+    "skills/long-running-task-management",
+    "skills/verification-before-completion",
+    "skills/multi-agent-coordinator",
+    "skills/subagent-driven-development",
+  ];
+  assert.deepEqual(manifest.skills, expectedSkills);
+  for (const dir of manifest.skills) {
     assert.ok(
       !isAbsolute(dir) && !normalize(dir).startsWith(".."),
       `skill dir ${dir} must stay in root`,
     );
     assert.ok(existsSync(join(root, dir)), `skill dir ${dir} must exist`);
+    assert.ok(existsSync(join(root, dir, "SKILL.md")), `skill ${dir} must contain SKILL.md`);
     assert.ok(
       pkg.files.some(
         (f) => normalize(dir) === normalize(f) || normalize(dir).startsWith(`${normalize(f)}/`),
