@@ -21,12 +21,15 @@ consumer for memory-adapter receipt schema v2 fails closed on missing/unknown
 receipts and labels all forwarded retrieval as untrusted evidence. Plan state is
 transient and has no file, database, session, cron, or Gateway integration.
 
-This package is not yet an OpenClaw plugin; its worker, model resolver, and verifier
-are caller-supplied functions. The cross-channel identity tuple and runtime
-retrieval/receipt interface remain open design dependencies for later phases. Model
-tiers are abstract contract values and must be resolved against the owner's current
-routing policy by a future runtime integration; this package does not change
-owner-chat model routing.
+The package includes the OpenClaw plugin manifest and guarded runtime hook; plugin
+activation remains off by default. Worker dispatch, model resolution, and verification
+use bounded caller-supplied adapters. This package does not change owner-chat model
+routing, and cross-channel identity/resume remains deferred in v1.
+
+`renderTaskHandoff()` builds a bounded Markdown handoff draft from explicit status,
+decisions, evidence, next action, approvals, budget notes, and sources. It does not
+write files or register outputs: callers must redact sensitive content and persist
+the result only through the existing `memory/handoffs/` or registered-output workflow.
 
 ## Skills and attribution
 

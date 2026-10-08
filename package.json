@@ -28,7 +28,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "node --check src/index.js && node --check src/plan.js && node --check src/contracts.js && node --check src/dispatch.js && node --check src/memory-receipt.js && node --check src/worker-brief.js && node --check src/tool-guard.js && node --check src/worker-runtime.js && node --check src/plugin.js"
+    "check": "node --check src/index.js && node --check src/plan.js && node --check src/contracts.js && node --check src/dispatch.js && node --check src/memory-receipt.js && node --check src/worker-brief.js && node --check src/handoff.js && node --check src/tool-guard.js && node --check src/worker-runtime.js && node --check src/plugin.js"
   },
   "c8": {
     "all": true,
