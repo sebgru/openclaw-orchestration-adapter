@@ -28,6 +28,16 @@ tiers are abstract contract values and must be resolved against the owner's curr
 routing policy by a future runtime integration; this package does not change
 owner-chat model routing.
 
+## Skills and attribution
+
+`skills/` holds 15 adapted orchestration skills (SKILL.md only; no scripts, state
+files, or cron). They are rewritten for native OpenClaw sessions, not copied
+verbatim. Sources, pinned SHA, and license notices are in [NOTICE](NOTICE). v1 skill
+rules: workers use isolated briefs (`context: "fork"` is forbidden without explicit
+owner approval), parallelism defaults to 1 (maximum 4 when approved), prompt-only
+restrictions are advisory unless the host enforces them, and cross-channel resume is
+deferred.
+
 ## Development
 
 Requires Node.js 22 or later.

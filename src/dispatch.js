@@ -4,6 +4,7 @@ import { readyTaskIds, transitionTask } from "./plan.js";
 function makeGrant(task) {
   return Object.freeze({
     taskId: task.id,
+    mode: task.mode ?? "tools",
     scope: structuredClone(task.scope),
     allowedTools: [...task.allowedTools],
     prohibitedActions: [...task.prohibitedActions],
