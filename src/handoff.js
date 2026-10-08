@@ -9,12 +9,14 @@ function cleanLine(value, field) {
   if (typeof value !== "string" || !value.trim()) {
     throw new TypeError(`${field} must be a non-empty string`);
   }
-  return value
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, MAX_FIELD_CHARS);
+  return (
+    value
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, MAX_FIELD_CHARS)
+  );
 }
 
 function list(value, field, normalize) {
@@ -104,8 +106,7 @@ export function renderTaskHandoff(input, { maxChars = 12_000 } = {}) {
     return `${decision.text}${approval}`;
   });
   const stepLines = steps.map(
-    (step) =>
-      `${step.status} — ${step.task}${step.evidence ? `; evidence: ${step.evidence}` : ""}`,
+    (step) => `${step.status} — ${step.task}${step.evidence ? `; evidence: ${step.evidence}` : ""}`,
   );
   const sections = [
     `# ${title}`,
