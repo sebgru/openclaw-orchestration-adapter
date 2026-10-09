@@ -31,6 +31,13 @@ decisions, evidence, next action, approvals, budget notes, and sources. It does 
 write files or register outputs: callers must redact sensitive content and persist
 the result only through the existing `memory/handoffs/` or registered-output workflow.
 
+Plans may declare quality gates before dispatch. Approval gates default to the
+preflight phase and block dispatch until a fresh evidence-backed pass or a fresh,
+rationale-bearing waiver is recorded. Other gates default to the completion phase. A passing
+gate must include a source, summary, observation time, and an explicit maximum evidence
+age; completion is false while tasks or gates are incomplete, evidence is stale, or
+no gates were declared. Gate state stays in memory with the plan.
+
 ## Skills and attribution
 
 `skills/` holds 15 adapted orchestration skills (SKILL.md only; no scripts, state

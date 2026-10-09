@@ -1,5 +1,11 @@
 export { TASK_CONTRACT_VERSION, assertValidTask, isTaskState, validateTask } from "./contracts.js";
 export { cancelPlan, createPlan, readyTaskIds, resolveBlocker, transitionTask } from "./plan.js";
+export {
+  assessPlanCompletion,
+  assessPlanExecutionReadiness,
+  createGateSet,
+  recordGateOutcome,
+} from "./gates.js";
 export { dispatchReadyBatch, dispatchTask } from "./dispatch.js";
 export { createMemoryEvidenceBrief, normalizeMemoryReceipt } from "./memory-receipt.js";
 

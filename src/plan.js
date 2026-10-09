@@ -1,4 +1,5 @@
 import { assertValidTask, isTaskState } from "./contracts.js";
+import { createGateSet } from "./gates.js";
 
 const TERMINAL = new Set(["succeeded", "failed", "blocked", "cancelled"]);
 const ALLOWED_TRANSITIONS = {
@@ -13,7 +14,7 @@ const ALLOWED_TRANSITIONS = {
 };
 
 /** Build a transient plan, rejecting duplicate IDs, missing dependencies, and cycles. */
-export function createPlan(tasks) {
+export function createPlan(tasks, { gates = [], declaredAt } = {}) {
   if (!Array.isArray(tasks) || tasks.length === 0)
     throw new TypeError("A plan needs at least one task");
 
@@ -49,6 +50,7 @@ export function createPlan(tasks) {
   for (const id of byId.keys()) visit(id);
 
   return {
+    gates: createGateSet(gates, { ...(declaredAt ? { declaredAt } : {}) }),
     tasks: new Map(
       [...byId].map(([id, task]) => [
         id,
