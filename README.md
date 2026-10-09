@@ -44,6 +44,11 @@ tenant, channel, and conversation scope, refuses symlinked directories, creates 
 new mode-0600 file without overwriting, and never creates directories or resumes
 the task. Callers remain responsible for redacting sensitive content. This is an
 opt-in library API; the plugin does not invoke it automatically.
+`loadTaskHandoff()` reads one exact handoff only when tenant, channel, and
+conversation scope all match; it returns bounded content as untrusted evidence
+and marks records older than 24 hours for confirmation. Scope is a lookup filter,
+not authentication: callers must derive it from trusted host identity. Loading
+never resumes work.
 
 ## Skills and attribution
 
