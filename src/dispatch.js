@@ -1,4 +1,4 @@
-import { assertValidTask } from "./contracts.js";
+import { assertValidTask, resolveMaxTokens } from "./contracts.js";
 import { assessPlanExecutionReadiness } from "./gates.js";
 import { readyTaskIds, transitionTask } from "./plan.js";
 
@@ -10,7 +10,10 @@ function makeGrant(task) {
     allowedTools: [...task.allowedTools],
     prohibitedActions: [...task.prohibitedActions],
     mayDelegate: false,
-    budget: structuredClone(task.budget),
+    budget: {
+      ...structuredClone(task.budget),
+      maxTokens: resolveMaxTokens(task.budget.maxTokens),
+    },
     outputSchema: structuredClone(task.outputSchema),
   });
 }
@@ -112,7 +115,13 @@ export async function dispatchTask(task, { worker, resolveModel, signal } = {}) 
     }
     const work = Promise.resolve().then(() =>
       worker({
-        task: structuredClone(task),
+        task: {
+          ...structuredClone(task),
+          budget: {
+            ...structuredClone(task.budget),
+            maxTokens: resolveMaxTokens(task.budget.maxTokens),
+          },
+        },
         grant: makeGrant(task),
         model,
         signal: controller.signal,

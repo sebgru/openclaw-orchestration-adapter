@@ -1,4 +1,4 @@
-import { assertValidTask } from "./contracts.js";
+import { assertValidTask, resolveMaxTokens } from "./contracts.js";
 import { createMemoryEvidenceBrief } from "./memory-receipt.js";
 
 const MAX_BRIEF_CHARS = 24_000;
@@ -36,7 +36,7 @@ export function createWorkerBrief(task, { memoryReceipt, memoryContent, maxChars
       prohibitedActions: Object.freeze([...task.prohibitedActions]),
       mayDelegate: false,
       maxCalls: task.budget.maxCalls,
-      maxTokens: task.budget.maxTokens,
+      maxTokens: resolveMaxTokens(task.budget.maxTokens),
       timeoutMs: task.budget.timeoutMs,
       maxRetries: task.budget.maxRetries,
     }),

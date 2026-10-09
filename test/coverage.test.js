@@ -6,6 +6,7 @@ import {
   createPlan,
   createMemoryEvidenceBrief,
   createWorkerBrief,
+  DEFAULT_MAX_TOKENS,
   dispatchReadyBatch,
   dispatchTask,
   isTaskState,
@@ -101,6 +102,45 @@ test("createPlan rejects non-arrays, empty plans, and self-dependencies", () => 
   assert.throws(() => createPlan(undefined), /at least one task/);
   assert.throws(() => createPlan([]), /at least one task/);
   assert.throws(() => createPlan([task("solo", ["solo"])]), /cannot depend on itself/);
+});
+
+test("maxTokens defaults to 150k, accepts null as unlimited, and rejects invalid ceilings", () => {
+  const defaulted = task("default-token-budget");
+  delete defaulted.budget.maxTokens;
+  assert.deepEqual(validateTask(defaulted), []);
+  assert.equal(createWorkerBrief(defaulted).authority.maxTokens, DEFAULT_MAX_TOKENS);
+
+  const unlimited = task("unlimited-token-budget");
+  unlimited.budget.maxTokens = null;
+  assert.deepEqual(validateTask(unlimited), []);
+  assert.equal(createWorkerBrief(unlimited).authority.maxTokens, null);
+
+  for (const value of [0, -1, 1.5, "150000"]) {
+    const invalid = task("invalid-token-budget");
+    invalid.budget.maxTokens = value;
+    assert.match(validateTask(invalid).join(" "), /maxTokens must be a positive integer or null/);
+  }
+});
+
+test("dispatch passes the resolved token ceiling to worker and grant", async () => {
+  for (const [configured, expected] of [
+    [undefined, DEFAULT_MAX_TOKENS],
+    [null, null],
+  ]) {
+    const dispatched = task("token-ceiling");
+    if (configured === undefined) delete dispatched.budget.maxTokens;
+    else dispatched.budget.maxTokens = configured;
+    let observed;
+    await dispatchTask(dispatched, {
+      resolveModel: async () => "model",
+      worker: async (input) => {
+        observed = input;
+        return { ok: true };
+      },
+    });
+    assert.equal(observed.task.budget.maxTokens, expected);
+    assert.equal(observed.grant.budget.maxTokens, expected);
+  }
 });
 
 test("createPlan handles diamond dependencies and transition guards", () => {
