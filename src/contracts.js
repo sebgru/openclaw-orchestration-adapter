@@ -1,4 +1,10 @@
 export const TASK_CONTRACT_VERSION = 1;
+export const DEFAULT_MAX_TOKENS = 150_000;
+
+/** Resolve the per-attempt token ceiling; null explicitly means unlimited. */
+export function resolveMaxTokens(maxTokens) {
+  return maxTokens === undefined ? DEFAULT_MAX_TOKENS : maxTokens;
+}
 
 const TASK_MODES = new Set(["tools", "completion"]);
 const ROUTE_TIERS = new Set(["cheap", "standard", "strong"]);
@@ -55,10 +61,17 @@ export function validateTask(task) {
   if (!isRecord(task.budget)) {
     errors.push("budget must be an object");
   } else {
-    for (const key of ["maxCalls", "maxTokens", "timeoutMs"]) {
+    for (const key of ["maxCalls", "timeoutMs"]) {
       if (!Number.isInteger(task.budget[key]) || !positiveFinite(task.budget[key])) {
         errors.push(`budget.${key} must be a positive integer`);
       }
+    }
+    if (
+      task.budget.maxTokens !== undefined &&
+      task.budget.maxTokens !== null &&
+      (!Number.isInteger(task.budget.maxTokens) || !positiveFinite(task.budget.maxTokens))
+    ) {
+      errors.push("budget.maxTokens must be a positive integer or null for unlimited");
     }
     if (task.budget.maxRetries !== 0 && task.budget.maxRetries !== 1) {
       errors.push("budget.maxRetries must be 0 or 1");

@@ -1,4 +1,11 @@
-export { TASK_CONTRACT_VERSION, assertValidTask, isTaskState, validateTask } from "./contracts.js";
+export {
+  DEFAULT_MAX_TOKENS,
+  TASK_CONTRACT_VERSION,
+  assertValidTask,
+  isTaskState,
+  resolveMaxTokens,
+  validateTask,
+} from "./contracts.js";
 export { cancelPlan, createPlan, readyTaskIds, resolveBlocker, transitionTask } from "./plan.js";
 export {
   assessPlanCompletion,
