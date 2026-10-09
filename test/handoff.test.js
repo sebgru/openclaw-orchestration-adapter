@@ -121,3 +121,14 @@ test("rejects list fields that are present but not arrays", () => {
   );
   assert.throws(() => renderTaskHandoff({ ...handoff, sources: {} }), /sources must be an array/);
 });
+
+test("rejects malformed scope while allowing an omitted scope", () => {
+  for (const scope of [null, "webchat", []]) {
+    assert.throws(() => renderTaskHandoff({ ...handoff, scope }), /scope must be an object/);
+  }
+  const scoped = renderTaskHandoff({
+    ...handoff,
+    scope: { tenantId: "tenant-a", channel: "webchat", conversationId: "chat-7" },
+  });
+  assert.match(scoped, /Scope: tenant=tenant-a; channel=webchat; conversation=chat-7/);
+});

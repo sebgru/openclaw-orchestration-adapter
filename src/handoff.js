@@ -94,6 +94,17 @@ export function renderTaskHandoff(input, { maxChars = 12_000 } = {}) {
   });
   const nextAction = cleanLine(input.nextAction, "nextAction");
   const owner = cleanLine(input.owner, "owner");
+  const scope = input.scope;
+  if (scope !== undefined && (!scope || typeof scope !== "object" || Array.isArray(scope))) {
+    throw new TypeError("scope must be an object");
+  }
+  const normalizedScope = scope
+    ? {
+        tenantId: cleanLine(scope.tenantId, "scope.tenantId"),
+        channel: cleanLine(scope.channel, "scope.channel"),
+        conversationId: cleanLine(scope.conversationId, "scope.conversationId"),
+      }
+    : undefined;
   const approvalsNeeded = list(input.approvalsNeeded, "approvalsNeeded", cleanLine);
   const modelsAndBudgets = list(input.modelsAndBudgets, "modelsAndBudgets", cleanLine);
   const sources = list(input.sources, "sources", cleanLine);
@@ -112,6 +123,11 @@ export function renderTaskHandoff(input, { maxChars = 12_000 } = {}) {
     `# ${title}`,
     `Written: ${writtenAt}`,
     `Status: ${status}`,
+    ...(normalizedScope
+      ? [
+          `Scope: tenant=${normalizedScope.tenantId}; channel=${normalizedScope.channel}; conversation=${normalizedScope.conversationId}`,
+        ]
+      : []),
     "",
     `## Objective and current status\n${objective}`,
     renderList("Decisions made", decisionLines),
