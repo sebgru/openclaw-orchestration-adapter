@@ -75,3 +75,49 @@ test("requires evidence-step status and a parseable write timestamp", () => {
     /status must be done/,
   );
 });
+
+test("rejects non-object input, invalid maxChars bounds, and malformed list items", () => {
+  assert.throws(() => renderTaskHandoff(null), /handoff must be an object/);
+  assert.throws(() => renderTaskHandoff("handoff"), /handoff must be an object/);
+  assert.throws(() => renderTaskHandoff([]), /handoff must be an object/);
+
+  for (const maxChars of [1.5, 0, -1, 24_001]) {
+    assert.throws(() => renderTaskHandoff(handoff, { maxChars }), /maxChars must be an integer/);
+  }
+
+  for (const malformed of [null, "nope", []]) {
+    assert.throws(
+      () => renderTaskHandoff({ ...handoff, decisions: [malformed] }),
+      /decisions\[0\] must be an object/,
+    );
+    assert.throws(
+      () => renderTaskHandoff({ ...handoff, steps: [malformed] }),
+      /steps\[0\] must be an object/,
+    );
+  }
+});
+
+test("formats minimal handoffs with a default timestamp and omitted lists", () => {
+  const markdown = renderTaskHandoff({
+    title: "Minimal handoff",
+    status: "in_progress",
+    objective: "Keep the door open for the next reader.",
+    decisions: [{ text: "Proceed with the plan." }],
+    nextAction: "Resume from the cited sources.",
+    owner: "Main agent",
+  });
+
+  assert.match(markdown, /Written: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  assert.match(markdown, /Decisions made\n- Proceed with the plan\.\n/);
+  assert.doesNotMatch(markdown, /approved by/);
+  assert.match(markdown, /Open questions\n- None recorded\./);
+  assert.match(markdown, /Sources and evidence\n- None recorded\./);
+});
+
+test("rejects list fields that are present but not arrays", () => {
+  assert.throws(
+    () => renderTaskHandoff({ ...handoff, decisions: "not-an-array" }),
+    /decisions must be an array/,
+  );
+  assert.throws(() => renderTaskHandoff({ ...handoff, sources: {} }), /sources must be an array/);
+});
