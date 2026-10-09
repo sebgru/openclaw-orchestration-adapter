@@ -195,6 +195,7 @@ export async function loadTaskHandoff(
     if (pathInfo.size > maxBytes) throw new RangeError("handoff exceeds the read limit");
     file = await open(absolutePath, constants.O_RDONLY | noFollow);
   } catch (error) {
+    /* c8 ignore next 3 -- ENOENT/ELOOP need a delete or symlink swap between readdir and lstat */
     if (error.code === "ENOENT" || error.code === "ELOOP") {
       throw new Error("handoff not found for this scope");
     }

@@ -37,6 +37,10 @@ async function workspaceWithHandoffDirectory() {
   return workspaceRoot;
 }
 
+function metadataHeader(metadata) {
+  return `<!-- openclaw-handoff:v1:${Buffer.from(JSON.stringify(metadata)).toString("base64url")} -->`;
+}
+
 test("persists a scoped paused handoff as a private, unique file in the existing directory", async () => {
   const workspaceRoot = await workspaceWithHandoffDirectory();
   try {
@@ -213,6 +217,146 @@ test("reads compatible v1.4 handoffs that predate the metadata header", async ()
     assert.equal(loaded.id, id);
     assert.equal(loaded.requiresConfirmation, false);
     assert.match(loaded.markdown, /Verify the supported runtime call path/);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects a non-object handoff scope before touching the workspace", async () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  for (const scope of [undefined, null, "tenant-a", 42, ["tenant-a"]]) {
+    await assert.rejects(
+      loadTaskHandoff({ id, scope }),
+      /scope must include tenantId, channel, and conversationId/,
+    );
+  }
+});
+
+test("rejects stored handoffs with malformed or unsupported metadata", async () => {
+  const workspaceRoot = await workspaceWithHandoffDirectory();
+  const cases = [
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      header: `<!-- openclaw-handoff:v1:${Buffer.from("not json").toString("base64url")} -->`,
+    },
+    { id: "33333333-3333-4333-8333-333333333333", metadata: null },
+    { id: "44444444-4444-4444-8444-444444444444", metadata: {} },
+    {
+      id: "55555555-5555-4555-8555-555555555555",
+      metadata: {
+        version: 2,
+        id: "55555555-5555-4555-8555-555555555555",
+        status: "blocked",
+        writtenAt: "2026-10-09T10:00:00.000Z",
+        scope: input.scope,
+      },
+    },
+    {
+      id: "66666666-6666-4666-8666-666666666666",
+      metadata: {
+        version: 1,
+        id: "not-a-uuid",
+        status: "blocked",
+        writtenAt: "2026-10-09T10:00:00.000Z",
+        scope: input.scope,
+      },
+    },
+    {
+      id: "77777777-7777-4777-8777-777777777777",
+      metadata: {
+        version: 1,
+        id: "77777777-7777-4777-8777-777777777777",
+        status: "done",
+        writtenAt: "2026-10-09T10:00:00.000Z",
+        scope: input.scope,
+      },
+    },
+    {
+      id: "88888888-8888-4888-8888-888888888888",
+      metadata: {
+        version: 1,
+        id: "88888888-8888-4888-8888-888888888888",
+        status: "blocked",
+        writtenAt: 12_345,
+        scope: input.scope,
+      },
+    },
+  ];
+  try {
+    for (const { id, header, metadata } of cases) {
+      await writeFile(
+        path.join(workspaceRoot, "memory", "handoffs", `handoff-2026-10-09-x-${id}.md`),
+        `${header ?? metadataHeader(metadata)}\n\nbody\n`,
+        { mode: 0o600 },
+      );
+      await assert.rejects(
+        loadTaskHandoff({ id, scope: input.scope }, { workspaceRoot }),
+        /handoff metadata is invalid/,
+      );
+    }
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects a handoff whose body omits its scope metadata", async () => {
+  const workspaceRoot = await workspaceWithHandoffDirectory();
+  const id = "99999999-9999-4999-8999-999999999999";
+  try {
+    await writeFile(
+      path.join(workspaceRoot, "memory", "handoffs", `handoff-2026-10-09-x-${id}.md`),
+      `${metadataHeader({
+        version: 1,
+        id,
+        status: "blocked",
+        writtenAt: "2026-10-09T10:00:00.000Z",
+        scope: input.scope,
+      })}\n\nBody without any matching marker lines\n`,
+      { mode: 0o600 },
+    );
+    await assert.rejects(
+      loadTaskHandoff(
+        { id, scope: input.scope },
+        { workspaceRoot, now: "2026-10-09T10:05:00.000Z" },
+      ),
+      /handoff body does not match its scope metadata/,
+    );
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("ignores candidate filenames that fall outside the handoff charset", async () => {
+  const workspaceRoot = await workspaceWithHandoffDirectory();
+  const id = "abcdefab-cdef-4abc-8def-abcdefabcdef";
+  try {
+    await writeFile(
+      path.join(workspaceRoot, "memory", "handoffs", `handoff-EVIL-${id}.md`),
+      "private data",
+      { mode: 0o600 },
+    );
+    await assert.rejects(
+      loadTaskHandoff({ id, scope: input.scope }, { workspaceRoot }),
+      /handoff not found for this scope/,
+    );
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects a handoff whose decoded content exceeds the read limit", async () => {
+  const workspaceRoot = await workspaceWithHandoffDirectory();
+  const id = "f0f0f0f0-f0f0-4f0f-8f0f-f0f0f0f0f0f0";
+  try {
+    await writeFile(
+      path.join(workspaceRoot, "memory", "handoffs", `handoff-2026-10-09-x-${id}.md`),
+      Buffer.from([0xff, 0xff]),
+      { mode: 0o600 },
+    );
+    await assert.rejects(
+      loadTaskHandoff({ id, scope: input.scope }, { workspaceRoot, maxBytes: 5 }),
+      /handoff exceeds the read limit/,
+    );
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
   }
