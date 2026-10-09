@@ -38,6 +38,13 @@ gate must include a source, summary, observation time, and an explicit maximum e
 age; completion is false while tasks or gates are incomplete, evidence is stale, or
 no gates were declared. Gate state stays in memory with the plan.
 
+`persistTaskHandoff()` can save an explicitly paused (`in_progress` or `blocked`)
+handoff under an existing workspace `memory/handoffs/` directory. It requires
+tenant, channel, and conversation scope, refuses symlinked directories, creates a
+new mode-0600 file without overwriting, and never creates directories or resumes
+the task. Callers remain responsible for redacting sensitive content. This is an
+opt-in library API; the plugin does not invoke it automatically.
+
 ## Skills and attribution
 
 `skills/` holds 15 adapted orchestration skills (SKILL.md only; no scripts, state
