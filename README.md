@@ -30,7 +30,8 @@ boundary or an enforced accounting guarantee: the current runtime adapter does
 not meter token usage or send a provider-enforced token cap. Timeouts and tool-call
 limits remain separate enforced controls. Each retry is a new attempt with the
 same ceiling; this package does not aggregate token use across retries or convert
-tokens into dollar cost.
+tokens into dollar cost. A host integration must enforce this hint if it needs a
+hard limit; workers cannot establish their own compliance by acknowledging it.
 
 The package includes the OpenClaw plugin manifest and guarded runtime hook; plugin
 activation remains off by default. Worker dispatch, model resolution, and verification
