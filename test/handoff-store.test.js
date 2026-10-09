@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -86,3 +86,29 @@ test("only persists paused tasks with conversation scope", async () => {
     await rm(workspaceRoot, { recursive: true, force: true });
   }
 });
+
+test("rejects non-object handoff input before touching the workspace", async () => {
+  for (const malformed of [null, "handoff", []]) {
+    await assert.rejects(persistTaskHandoff(malformed), /handoff must be an object/);
+  }
+});
+
+test(
+  "surfaces unexpected filesystem errors while resolving the handoff directory",
+  { skip: typeof process.getuid === "function" && process.getuid() === 0 },
+  async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "handoff-store-"));
+    const memory = path.join(workspaceRoot, "memory");
+    try {
+      await mkdir(path.join(memory, "handoffs"), { recursive: true });
+      await chmod(memory, 0o000);
+      await assert.rejects(
+        persistTaskHandoff(input, { workspaceRoot }),
+        (error) => error.code === "EACCES",
+      );
+    } finally {
+      await chmod(memory, 0o700);
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  },
+);
