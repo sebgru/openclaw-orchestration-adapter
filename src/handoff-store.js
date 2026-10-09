@@ -38,6 +38,7 @@ async function requireDirectoryWithoutSymlinks(workspaceRoot) {
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
       throw new TypeError("memory/handoffs must be an existing non-symlink directory");
     }
+    /* c8 ignore next 3 -- realpath can only diverge on case-insensitive filesystems or a TOCTOU race */
     if ((await realpath(current)) !== current) {
       throw new TypeError("memory/handoffs must resolve within workspaceRoot");
     }
@@ -62,28 +63,33 @@ export async function persistTaskHandoff(input, { workspaceRoot, maxChars = 12_0
     throw new TypeError("persisted handoff requires tenant, channel, and conversation scope");
   }
 
-  const markdown = renderTaskHandoff(input, { maxChars });
-  const directory = await requireDirectoryWithoutSymlinks(workspaceRoot);
   const writtenAt = input.writtenAt ?? new Date().toISOString();
-  const date = writtenAt.slice(0, 10);
+  const date = typeof writtenAt === "string" ? writtenAt.slice(0, 10) : "";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
     throw new TypeError("writtenAt must begin with a valid ISO date");
   }
+
+  const markdown = renderTaskHandoff(input, { maxChars });
+  const directory = await requireDirectoryWithoutSymlinks(workspaceRoot);
   const id = randomUUID();
   const filename = `handoff-${date}-${slug(input.title)}-${id}.md`;
   const relativePath = path.posix.join("memory", "handoffs", filename);
   const absolutePath = path.join(directory, filename);
-  const flags =
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+  // O_NOFOLLOW is unavailable on some platforms; fall back to no flag there.
+  /* c8 ignore next */
+  const noFollow = constants.O_NOFOLLOW ?? 0;
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow;
   const file = await open(absolutePath, flags, 0o600);
   try {
     await file.writeFile(markdown, { encoding: "utf8" });
     await file.sync();
+    /* c8 ignore start -- only reached on write/sync I/O failures such as a full disk */
   } catch (error) {
     await file.close();
     await unlink(absolutePath).catch(() => {});
     throw error;
   }
+  /* c8 ignore stop */
   await file.close();
   return { id, relativePath, status: input.status, writtenAt };
 }
