@@ -1,4 +1,5 @@
 import { assertValidTask } from "./contracts.js";
+import { assessPlanExecutionReadiness } from "./gates.js";
 import { readyTaskIds, transitionTask } from "./plan.js";
 
 function makeGrant(task) {
@@ -139,6 +140,16 @@ export async function dispatchReadyBatch(
     throw new RangeError("maxParallel must be an integer from 1 to 32");
   }
   if (signal?.aborted) return { dispatched: [], cancelled: true };
+
+  const readiness = assessPlanExecutionReadiness(plan);
+  if (!readiness.ready) {
+    return {
+      dispatched: [],
+      cancelled: false,
+      blocked: true,
+      blockedGates: readiness.blockedGates,
+    };
+  }
 
   const taskIds = readyTaskIds(plan).slice(0, maxParallel);
   const results = await Promise.all(
