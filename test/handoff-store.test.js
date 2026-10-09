@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -112,3 +122,55 @@ test(
     }
   },
 );
+
+test("rejects a handoff whose writtenAt cannot produce a valid file date", async () => {
+  const workspaceRoot = await workspaceWithHandoffDirectory();
+  try {
+    for (const writtenAt of ["not-a-date", "2026-13-45T00:00:00.000Z", 20_261_009]) {
+      await assert.rejects(
+        persistTaskHandoff({ ...input, writtenAt }, { workspaceRoot }),
+        /writtenAt must begin with a valid ISO date/,
+      );
+    }
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("falls back to a stable slug when the title has no alphanumeric characters", async () => {
+  const workspaceRoot = await workspaceWithHandoffDirectory();
+  try {
+    const saved = await persistTaskHandoff({ ...input, title: "!!!" }, { workspaceRoot });
+    assert.match(saved.relativePath, /handoff-2026-10-09-paused-task-[0-9a-f-]+\.md$/);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("stamps the current time when writtenAt is omitted", async () => {
+  const workspaceRoot = await workspaceWithHandoffDirectory();
+  try {
+    const saved = await persistTaskHandoff({ ...input, writtenAt: undefined }, { workspaceRoot });
+    assert.match(saved.writtenAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    assert.match(
+      saved.relativePath,
+      new RegExp(`^memory/handoffs/handoff-${saved.writtenAt.slice(0, 10)}-`),
+    );
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects a workspace root that is not a directory", async () => {
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "handoff-store-"));
+  const file = path.join(workspaceRoot, "not-a-directory");
+  try {
+    await writeFile(file, "not a directory");
+    await assert.rejects(
+      persistTaskHandoff(input, { workspaceRoot: file }),
+      /workspaceRoot must be a directory/,
+    );
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
