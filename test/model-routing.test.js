@@ -132,6 +132,21 @@ test("resolver does not select an unconfigured pool, model, or tier", async () =
   );
 });
 
+test("resolver honors an explicit in-pool task model and its availability", async () => {
+  const resolve = createWorkerModelResolver({ routes: POOL });
+  assert.equal(
+    await resolve("standard", task({ model: "example/alternate-standard" })),
+    "example/alternate-standard",
+  );
+  const offline = createWorkerModelResolver({
+    routes: POOL,
+    isAvailable: async (model) => model !== "example/alternate-standard",
+  });
+  await assert.rejects(offline("standard", task({ model: "example/alternate-standard" })), {
+    code: "unavailable",
+  });
+});
+
 test("route configuration validates tier names, lists, entries, and duplicates", () => {
   for (const routes of [
     null,
