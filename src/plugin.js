@@ -1,3 +1,8 @@
+import {
+  DISPATCH_TOOL_NAME,
+  createDispatchToolFactory,
+  normalizeDispatchConfig,
+} from "./agent-tool.js";
 import { dispatchReadyBatch, dispatchTask } from "./dispatch.js";
 import {
   assertWorkerModel,
@@ -15,6 +20,10 @@ import { createBoundWorker } from "./worker-runtime.js";
  * and handler errors/timeouts fail closed; native Codex/CLI tool relays support
  * blocking but this is verified only from docs, not by a live run.
  *
+ * When `dispatch` config is present, one optional agent tool (`orchestration_dispatch`)
+ * is registered via api.registerTool(factory, { name, optional: true }); it is only
+ * exposed to verified-owner, non-sandboxed runs and must be allowlisted by the operator.
+ *
  * Model routing here is worker-only: no model-resolution hook is registered, so
  * the owner/main-session model chain is never touched. Every handle-created
  * worker rejects models outside configured route pools (see model-routing.js),
@@ -23,9 +32,10 @@ import { createBoundWorker } from "./worker-runtime.js";
  */
 export function registerOrchestration(
   api,
-  { guard = new ToolGuard(), agentId, workerRoutes } = {},
+  { guard = new ToolGuard(), agentId, workerRoutes, dispatch } = {},
 ) {
   const routes = normalizeWorkerRoutes(workerRoutes);
+  const dispatchLimits = normalizeDispatchConfig(dispatch);
   api.on(
     "before_tool_call",
     (event, ctx) =>
@@ -68,6 +78,16 @@ export function registerOrchestration(
         worker: createWorker({ agentId: id, buildMessage }),
       }),
   };
+  if (dispatchLimits) {
+    if (typeof api.registerTool !== "function") throw new TypeError("api.registerTool required");
+    api.registerTool(
+      createDispatchToolFactory({ getHandle: () => handle, limits: dispatchLimits }),
+      {
+        name: DISPATCH_TOOL_NAME,
+        optional: true,
+      },
+    );
+  }
   handles.set(api, handle);
   return handle;
 }
@@ -87,6 +107,7 @@ export default {
     registerOrchestration(api, {
       agentId: api.pluginConfig.agentId,
       workerRoutes: api.pluginConfig.workerRoutes,
+      dispatch: api.pluginConfig.dispatch,
     });
   },
 };
