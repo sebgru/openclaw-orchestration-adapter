@@ -58,6 +58,9 @@ export function validateTask(task) {
     errors.push("completion mode must not grant tools");
   }
   if (!ROUTE_TIERS.has(task.routeTier)) errors.push("routeTier must be cheap, standard, or strong");
+  if (task.model !== undefined && !nonEmptyString(task.model)) {
+    errors.push("model must be a non-empty model reference when set");
+  }
   if (!isRecord(task.budget)) {
     errors.push("budget must be an object");
   } else {
