@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_WORKER_ROUTES,
   ROUTE_TIERS,
-  WorkerRouteError,
   assertWorkerModel,
   createPlan,
   createWorkerModelResolver,
