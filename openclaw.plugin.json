@@ -19,13 +19,73 @@
     "skills/multi-agent-coordinator",
     "skills/subagent-driven-development"
   ],
-  "activation": { "onStartup": false },
+  "activation": {
+    "onStartup": false
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "enabled": { "type": "boolean", "default": false },
-      "agentId": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
+      "enabled": {
+        "type": "boolean",
+        "default": false
+      },
+      "agentId": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "workerRoutes": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Worker-only tier overrides; may narrow or reorder the subscription allow-list, never extend it. Does not affect the main-session model chain.",
+        "properties": {
+          "cheap": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "openai/gpt-6-luna",
+                "anthropic/claude-haiku-4-5",
+                "openai/gpt-6-sol",
+                "anthropic/claude-sonnet-5-5",
+                "anthropic/claude-opus-5-5"
+              ]
+            }
+          },
+          "standard": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "openai/gpt-6-luna",
+                "anthropic/claude-haiku-4-5",
+                "openai/gpt-6-sol",
+                "anthropic/claude-sonnet-5-5",
+                "anthropic/claude-opus-5-5"
+              ]
+            }
+          },
+          "strong": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "openai/gpt-6-luna",
+                "anthropic/claude-haiku-4-5",
+                "openai/gpt-6-sol",
+                "anthropic/claude-sonnet-5-5",
+                "anthropic/claude-opus-5-5"
+              ]
+            }
+          }
+        }
+      }
     }
   }
 }

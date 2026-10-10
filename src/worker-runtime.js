@@ -38,7 +38,7 @@ function lastAssistantText(messages) {
  * toolsAlsoAllow is deliberately never used: it is additive, not a ceiling.
  * The ceiling is the before_tool_call guard in plugin.js.
  */
-export function createBoundWorker({ subagent, guard, agentId, buildMessage }) {
+export function createBoundWorker({ subagent, guard, agentId, buildMessage, checkModel }) {
   if (!subagent || typeof subagent.run !== "function")
     throw new TypeError("subagent runtime required");
   if (!guard) throw new TypeError("guard required");
@@ -46,6 +46,8 @@ export function createBoundWorker({ subagent, guard, agentId, buildMessage }) {
 
   return async function worker({ task, grant, model, signal }) {
     if (signal?.aborted) throw signal.reason ?? new Error("aborted");
+    // Fail closed before any runtime call: the worker never starts on a rejected model.
+    checkModel?.(model, task);
     if (grant.mode === "completion") {
       const { text } = await subagent.complete({
         agentId,

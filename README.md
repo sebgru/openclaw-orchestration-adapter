@@ -38,6 +38,48 @@ activation remains off by default. Worker dispatch, model resolution, and verifi
 use bounded caller-supplied adapters. This package does not change owner-chat model
 routing, and cross-channel identity/resume remains deferred in v1.
 
+### Worker-only model routing
+
+`createWorkerModelResolver()` is a `resolveModel(routeTier, task)` adapter for
+dispatched execution workers only. It registers no hook, reads no Gateway config,
+and never changes the owner/main-session chain (Luna → Claude Sonnet 5 → DeepSeek
+Flash on WebUI and Telegram stays as configured). The main session is the
+coordinator: short replies stay on its own Luna-first chain, and actual work is
+dispatched to workers routed here.
+
+Workers may use only these subscription-backed models (no OpenAI API-key,
+OpenRouter, DeepSeek, Ollama, or other routes):
+
+| Tier       | Candidates, in order                                | Use for                                  |
+| ---------- | --------------------------------------------------- | ---------------------------------------- |
+| `cheap`    | `anthropic/claude-haiku-4-5` → `openai/gpt-6-luna`  | bounded lookups, summaries, simple edits |
+| `standard` | `openai/gpt-6-luna` → `anthropic/claude-sonnet-5-5` | normal coding and execution              |
+| `strong`   | `openai/gpt-6-sol` → `anthropic/claude-opus-5-5`    | debugging, complex or high-stakes work   |
+
+- The first candidate wins. A later candidate is used only when an optional
+  `isAvailable(model, { tier, taskId })` callback returns something other than
+  `true` for the earlier ones. If no candidate is available, the resolver throws a
+  `WorkerRouteError` rather than falling back outside the list.
+- `task.model` (optional) requests one exact model. It must be one of the five
+  allow-listed models; any other reference is rejected (`model-not-allowed`).
+- `openai/gpt-6-astra` is approval-only: it is never a tier candidate and is
+  rejected by config overrides. A task may use it only by setting
+  `task.model: "openai/gpt-6-astra"` and passing a matching per-task approval,
+  `modelApprovals: [{ taskId, model: "openai/gpt-6-astra" }]`. Callers must
+  derive approvals from the owner's explicit message, never from worker output.
+- The plugin config `workerRoutes` (`cheap`/`standard`/`strong`) may narrow or
+  reorder these lists. It cannot add models, and invalid config fails
+  registration.
+- Workers created by the plugin handle check every model before any runtime call,
+  including models returned by a caller-supplied `resolveModel`. The library-level
+  `dispatchTask()` stays model-agnostic, so to use the allow-list there, pass
+  `createWorkerModelResolver()` or call `assertWorkerModel()`.
+
+The allow-list checks model references only. Whether `openai/*` refs run on the
+Codex subscription (and `anthropic/*` on the `claude-cli` runtime) depends on the
+host's auth order and runtime config, and this package does not verify that.
+The separate `model-router` plugin is untouched and unrelated.
+
 `renderTaskHandoff()` builds a bounded Markdown handoff draft from explicit status,
 decisions, evidence, next action, approvals, budget notes, and sources. It does not
 write files or register outputs: callers must redact sensitive content and persist

@@ -14,6 +14,15 @@ export {
   recordGateOutcome,
 } from "./gates.js";
 export { dispatchReadyBatch, dispatchTask } from "./dispatch.js";
+export {
+  APPROVAL_ONLY_WORKER_MODELS,
+  DEFAULT_WORKER_ROUTES,
+  WORKER_MODELS,
+  WorkerRouteError,
+  assertWorkerModel,
+  createWorkerModelResolver,
+  normalizeWorkerRoutes,
+} from "./model-routing.js";
 export { createMemoryEvidenceBrief, normalizeMemoryReceipt } from "./memory-receipt.js";
 
 export { createWorkerBrief } from "./worker-brief.js";

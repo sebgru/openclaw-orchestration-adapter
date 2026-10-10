@@ -80,7 +80,7 @@ test("register() wires the hook and a handle whose dispatch uses the guard-bound
   assert.equal(handle.guard.size, 0);
 
   const done = await handle.dispatchTask(task({ mode: "completion", allowedTools: [] }), {
-    resolveModel: () => "m",
+    resolveModel: () => "anthropic/claude-haiku-4-5",
   });
   assert.equal(done.output.text, "ok");
 });
@@ -147,7 +147,7 @@ test("cancellation revokes the binding so later tool calls fail closed; runtime 
   const { guard, dispatchTask } = getOrchestration(api);
   assert.equal(typeof api.runtime.subagent.cancelRun, "undefined");
   const ac = new AbortController();
-  const p = dispatchTask(task(), { resolveModel: () => "m", signal: ac.signal });
+  const p = dispatchTask(task(), { signal: ac.signal });
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(guard.size, 1);
   ac.abort("stop");
