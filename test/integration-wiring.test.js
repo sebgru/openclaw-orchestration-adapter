@@ -65,14 +65,14 @@ test("default export stays inactive without explicit enablement", () => {
 });
 
 test("register() wires the hook and a handle whose dispatch uses the guard-bound worker", async () => {
-  const { api, hooks, calls } = fakeApi({ enabled: true, agentId: "main" });
+  const { api, hooks, calls } = fakeApi({ enabled: true, agentId: "main", workerRoutes: { standard: ["example/model-fast", "example/model-cheap"] } });
   plugin.register(api);
   assert.equal(hooks.length, 1);
   assert.equal(hooks[0][0], "before_tool_call");
   const handle = getOrchestration(api);
   assert.ok(handle);
 
-  const out = await handle.dispatchTask(task(), { resolveModel: () => "openai/gpt-6-luna" });
+  const out = await handle.dispatchTask(task(), { resolveModel: () => "example/model-fast" });
   assert.equal(out.output.text, "done");
   const run = calls.find((c) => c[0] === "run")[1];
   assert.match(run.sessionKey, /^agent:main:subagent:oca-/);
@@ -80,14 +80,14 @@ test("register() wires the hook and a handle whose dispatch uses the guard-bound
   assert.equal(handle.guard.size, 0);
 
   const done = await handle.dispatchTask(task({ mode: "completion", allowedTools: [] }), {
-    resolveModel: () => "anthropic/claude-haiku-4-5",
+    resolveModel: () => "example/model-cheap",
   });
   assert.equal(done.output.text, "ok");
 });
 
 test("dispatchReadyBatch is wired through the handle and still requires a verifier", async () => {
   const { api } = fakeApi({ enabled: true, agentId: "main" });
-  const handle = registerOrchestration(api, { agentId: "main" });
+  const handle = registerOrchestration(api, { agentId: "main", workerRoutes: { standard: ["example/model-fast"] } });
   await assert.rejects(handle.dispatchReadyBatch({ tasks: [] }, {}), /verifier/);
 });
 
@@ -140,7 +140,7 @@ test("packaging metadata ships the manifest and any declared skill directory", (
 test("cancellation revokes the binding so later tool calls fail closed; runtime cancel is not assumed", async () => {
   let release;
   const { api, hooks } = fakeApi(
-    { enabled: true, agentId: "main" },
+    { enabled: true, agentId: "main", workerRoutes: { standard: ["example/model-fast"] } },
     { waitForRun: () => new Promise((r) => (release = r)) },
   );
   plugin.register(api);
