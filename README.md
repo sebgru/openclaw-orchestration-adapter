@@ -38,6 +38,25 @@ activation remains off by default. Worker dispatch, model resolution, and verifi
 use bounded caller-supplied adapters. This package does not change owner-chat model
 routing, and cross-channel identity/resume remains deferred in v1.
 
+### Agent-callable dispatch tool
+
+When the plugin config contains a `dispatch` block, the plugin registers one optional agent tool, `orchestration_dispatch`, with `api.registerTool(factory, { name, optional: true })`. It is hidden unless an operator allowlists it (`tools.allow`), the requester is the verified owner (`senderIsOwner`), the run is not sandboxed, and the host context supplies `requesterSenderId`, `agentId`, `sessionKey`, and `deliveryContext.channel`. Any missing field hides the tool and makes `execute` fail closed; no placeholder identity is substituted.
+
+```json
+{
+  "dispatch": {
+    "allowedTools": ["read"],
+    "maxCalls": 10,
+    "maxTimeoutMs": 120000,
+    "maxTokens": 100000
+  }
+}
+```
+
+- `dispatch` is an operator-owned ceiling; the calling agent can only narrow it. Delegation tools are never grantable, completion mode (default) grants no tools, and budgets above the ceiling are rejected.
+- Task scope (`agentId`, `deliveryContext.channel`, `sessionKey`) is taken from host tool context, not model input; unknown parameters are rejected. The model cannot choose a model, retries, or dependencies; the tier's `workerRoutes` pool still decides the model and an unconfigured tier fails closed.
+- A single dispatch has no independent verifier, so results are returned with `verified: false` and must be checked by the caller.
+
 ### Worker-only model routing
 
 `createWorkerModelResolver()` selects a model for dispatched execution workers only. It registers no model-resolution hook and never changes the owner/main-session chain. The package contains no provider-specific model names or default routes: deployments configure `workerRoutes` in the plugin config.

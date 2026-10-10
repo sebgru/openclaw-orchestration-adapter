@@ -76,7 +76,43 @@
             }
           }
         }
+      },
+      "dispatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Enables the optional orchestration_dispatch agent tool. Operator-owned ceiling: the calling agent may only narrow it.",
+        "properties": {
+          "allowedTools": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "maxCalls": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "maxTimeoutMs": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "maxTokens": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
       }
+    }
+  },
+  "contracts": {
+    "tools": ["orchestration_dispatch"]
+  },
+  "toolMetadata": {
+    "orchestration_dispatch": {
+      "optional": true,
+      "sideEffecting": true
     }
   }
 }
