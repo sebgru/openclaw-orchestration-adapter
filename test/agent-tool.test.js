@@ -223,3 +223,34 @@ test("registerOrchestration requires api.registerTool when dispatch is configure
   delete api.registerTool;
   assert.throws(() => registerOrchestration(api, { dispatch: {} }), /registerTool/);
 });
+
+for (const [mode, tools, callName] of [
+  ["completion", [], "complete"],
+  ["tools", ["read"], "run"],
+]) {
+  test(`dispatch worker message carries the contract brief in ${mode} mode`, async () => {
+    const { api, tools: registered, runs } = fakeApi(config);
+    plugin.register(api);
+    const tool = registered[0][0](owner);
+    await tool.execute("call-1", {
+      goal: "summarise the report",
+      successCriteria: ["lists three findings"],
+      prohibitedActions: ["write files"],
+      routeTier: "standard",
+      mode,
+      allowedTools: tools,
+      budget: { maxCalls: 3, timeoutMs: 1500, maxTokens: 500 },
+      outputSchema: { type: "object", properties: { findings: { type: "array" } } },
+    });
+    const call = runs.find((r) => r[0] === callName)[1];
+    const text = call.message;
+    assert.match(text, /summarise the report/);
+    assert.match(text, /lists three findings/);
+    assert.match(text, /write files/);
+    assert.match(text, /"maxCalls": 3/);
+    assert.match(text, /"maxTokens": 500/);
+    assert.match(text, /"timeoutMs": 1500/);
+    assert.match(text, /"findings"/);
+    assert.doesNotMatch(text, /memory/i);
+  });
+}

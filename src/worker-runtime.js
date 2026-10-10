@@ -1,4 +1,5 @@
 import { newWorkerSessionKey } from "./tool-guard.js";
+import { createWorkerBrief } from "./worker-brief.js";
 
 function splitModel(model) {
   const slash = model.indexOf("/");
@@ -12,6 +13,33 @@ function lastAssistantText(messages) {
       return typeof m.content === "string" ? m.content : (m.content ?? null);
   }
   return null;
+}
+
+/**
+ * Default worker message: the bounded contract brief (goal, success criteria,
+ * prohibited actions, budget, output schema). No memory receipt or content is
+ * passed, so the brief never carries memory evidence.
+ */
+export function defaultWorkerMessage(task) {
+  const { task: contract, authority } = createWorkerBrief(task);
+  const brief = {
+    task: contract,
+    authority: {
+      prohibitedActions: authority.prohibitedActions,
+      mayDelegate: authority.mayDelegate,
+      maxCalls: authority.maxCalls,
+      maxTokens: authority.maxTokens,
+      timeoutMs: authority.timeoutMs,
+      maxRetries: authority.maxRetries,
+    },
+  };
+  return [
+    "Complete this task within the contract below. Meet every success criterion,",
+    "avoid every prohibited action, stay within the budget, and answer in the",
+    "requested output schema. Do not delegate.",
+    "",
+    JSON.stringify(brief, null, 2),
+  ].join("\n");
 }
 
 /**
@@ -42,7 +70,7 @@ export function createBoundWorker({ subagent, guard, agentId, buildMessage, chec
   if (!subagent || typeof subagent.run !== "function")
     throw new TypeError("subagent runtime required");
   if (!guard) throw new TypeError("guard required");
-  const message = buildMessage ?? ((task) => task.goal);
+  const message = buildMessage ?? defaultWorkerMessage;
 
   return async function worker({ task, grant, model, signal }) {
     if (signal?.aborted) throw signal.reason ?? new Error("aborted");
