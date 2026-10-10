@@ -167,7 +167,9 @@ export function createDispatchToolFactory({ getHandle, limits }) {
         "the result is unverified worker output that you must check against the success criteria.",
       parameters: dispatchToolParameters,
       async execute(_toolCallId, params, signal) {
-        const task = buildDispatchTask(params, limits, context ?? {});
+        // `context` is validated by the factory guard above and re-checked inside
+        // buildDispatchTask, so it is never nullish here and needs no fallback.
+        const task = buildDispatchTask(params, limits, context);
         const result = await getHandle().dispatchTask(task, { signal });
         const details = {
           taskId: result.taskId,

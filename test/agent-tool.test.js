@@ -81,6 +81,8 @@ test("factory hides the tool unless owner, unsandboxed", () => {
   const factory = tools[0][0];
   assert.equal(factory({ senderIsOwner: false }), null);
   assert.equal(factory({}), null);
+  assert.equal(factory(null), null);
+  assert.equal(factory([]), null);
   assert.equal(factory({ ...owner, sandboxed: true }), null);
   for (const key of ["requesterSenderId", "agentId", "sessionKey", "deliveryContext"]) {
     assert.equal(factory({ ...owner, [key]: undefined }), null, key);
@@ -190,9 +192,20 @@ test("scope comes from host context, not params; no model override is accepted",
     { ...owner, deliveryContext: undefined },
     { ...owner, sessionKey: "" },
     { ...owner, sandboxed: true },
+    null,
+    "not-a-record",
+    [],
   ]) {
     assert.throws(() => buildDispatchTask(valid, limits, bad), /trusted requester/);
   }
+  assert.throws(
+    () => buildDispatchTask({ ...valid, allowedTools: [1] }, limits, owner),
+    /allowedTools must be strings/,
+  );
+  assert.throws(
+    () => buildDispatchTask({ ...valid, allowedTools: "read" }, limits, owner),
+    /allowedTools must be strings/,
+  );
 });
 
 test("normalizeDispatchConfig validates the block", () => {
