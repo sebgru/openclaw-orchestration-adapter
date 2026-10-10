@@ -12,12 +12,12 @@ Run independent work concurrently with native OpenClaw subagents. Build each wor
    - **Done when:** each pair of tasks passes all three checks; otherwise serialize the conflicting ones.
 
 2. Set the limit.
-   - Default parallelism is 1. Raise it only when Sebastian approved a plan that allows more, up to the v1 maximum of 4 workers. No nested delegation: workers do not spawn workers.
+   - Default parallelism is 1. Raise it only when the owner approved a plan that allows more, up to the v1 maximum of 4 workers. No nested delegation: workers do not spawn workers.
    - **Done when:** worker count and per-worker budget (calls, tokens, time) are written down before spawning; if a budget cannot be bounded, do not dispatch.
 
 3. Spawn.
-   - One `sessions_spawn` per task with `context: "isolated"`, a stable `taskName`, a UI `label`, `runTimeoutSeconds` set to the time cap, and the brief. Never use `context: "fork"` by default; an exception needs Sebastian's explicit approval plus evidence that the worker needs transcript context no brief excerpt can carry.
-   - Choose the worker tier per the canonical routing policy in AGENTS.md → Tools → Local notes and proposal §8; read model IDs from that policy. Never auto-select Opus, Astra, or Codex routes.
+   - One `sessions_spawn` per task with `context: "isolated"`, a stable `taskName`, a UI `label`, `runTimeoutSeconds` set to the time cap, and the brief. Never use `context: "fork"` by default; an exception needs the owner's explicit approval plus evidence that the worker needs transcript context no brief excerpt can carry.
+   - Choose the worker tier under the deployment’s worker-tier policy; public package instructions do not prescribe provider-specific model IDs. Use only the deployment-approved candidate pool; approval-only models and providers outside policy must never be auto-selected.
    - **Done when:** each spawn was accepted and you recorded its run id and completion mode.
 
 4. Wait without polling.

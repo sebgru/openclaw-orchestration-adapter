@@ -19,7 +19,7 @@ Authority travels in the worker brief. There is no grant ledger or expiry sweep;
 
 3. Route by class.
    - `in-scope`: re-issue the narrowed grant to a fresh worker rather than widening the running one.
-   - `needs-owner`: ask Sebastian (push, merge, config, restart, external/destructive actions, secrets, Opus/Astra/Codex routing, extra spend). Approval covers only that exact action.
+   - `needs-owner`: ask the owner (push, merge, config, restart, external/destructive actions, secrets, approval-only or otherwise unconfigured model routing, extra spend). Approval covers only that exact action.
    - **Done when:** no worker holds authority beyond its brief and every owner approval is quoted in the report.
 
 4. Do not rely on prompt text alone as a hard ceiling. A tool restriction is enforceable only if the host proves it (sandbox/tool policy); say which limits are host-enforced and which are instructions.

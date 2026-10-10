@@ -15,9 +15,8 @@ export {
 } from "./gates.js";
 export { dispatchReadyBatch, dispatchTask } from "./dispatch.js";
 export {
-  APPROVAL_ONLY_WORKER_MODELS,
   DEFAULT_WORKER_ROUTES,
-  WORKER_MODELS,
+  ROUTE_TIERS,
   WorkerRouteError,
   assertWorkerModel,
   createWorkerModelResolver,

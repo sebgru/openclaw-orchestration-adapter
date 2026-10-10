@@ -1,6 +1,6 @@
 ---
 name: writing-plans
-description: "Use when Sebastian asks for a plan, or multi-step work needs one before execution: produces a bounded plan with dependencies, gates, budgets, and approval points."
+description: "Use when the owner asks for a plan, or multi-step work needs one before execution: produces a bounded plan with dependencies, gates, budgets, and approval points."
 ---
 
 # Writing Plans
@@ -23,13 +23,13 @@ Produce a plan that another worker or a later turn can execute without guessing.
 
 4. Declare gates and budgets.
    - Gates: tests, lint, build/type, security, diff review, provenance, approvals (see `quality-gate-orchestrator`).
-   - Budgets: calls, tokens, wall-clock, workers (default 1; up to 4 only with Sebastian's approval), retries (max 1, infrastructure failures only), a `runTimeoutSeconds` time cap per spawned step, and model tier per step following the canonical routing policy in AGENTS.md → Tools → Local notes (abstract cheap/standard/strong/expert tiers per proposal §8). Read model IDs from that policy; do not hard-code or invent them.
+   - Budgets: calls, tokens, wall-clock, workers (default 1; up to 4 only with the owner's approval), retries (max 1, infrastructure failures only), a `runTimeoutSeconds` time cap per spawned step, and model tier per step using abstract task tiers and the deployment's configured candidate pools; do not hard-code provider-specific model IDs.
    - **Done when:** no paid step lacks an explicit cap.
 
 5. Mark owner gates.
-   - List every step that needs Sebastian's approval: push, merge, PR, config, restart, external or destructive actions, Opus/Astra/Codex-native routing, `context: "fork"` workers.
+   - List every step that needs the owner's approval: push, merge, PR, config, restart, external or destructive actions, approval-only or otherwise unconfigured model routing, `context: "fork"` workers.
    - **Done when:** each such step is flagged `needs-approval` and nothing marks it auto-approved.
 
 6. Present and persist.
-   - Show the plan in the reply. Persist only if the work spans sessions or Sebastian asks: write to `memory/handoffs/<topic>-<date>.md` or the project's plan file under `projects/`; never create `tasks/` or a new store.
-   - **Done when:** Sebastian has the plan, and any written file path is reported. Execution waits for his explicit go-ahead (see `executing-plans`).
+   - Show the plan in the reply. Persist only if the work spans sessions or the owner asks: write to `memory/handoffs/<topic>-<date>.md` or the project's plan file under `projects/`; never create `tasks/` or a new store.
+   - **Done when:** the owner has the plan, and any written file path is reported. Execution waits for his explicit go-ahead (see `executing-plans`).

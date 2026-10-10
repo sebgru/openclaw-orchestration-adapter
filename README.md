@@ -40,45 +40,32 @@ routing, and cross-channel identity/resume remains deferred in v1.
 
 ### Worker-only model routing
 
-`createWorkerModelResolver()` is a `resolveModel(routeTier, task)` adapter for
-dispatched execution workers only. It registers no hook, reads no Gateway config,
-and never changes the owner/main-session chain (Luna → Claude Sonnet 5 → DeepSeek
-Flash on WebUI and Telegram stays as configured). The main session is the
-coordinator: short replies stay on its own Luna-first chain, and actual work is
-dispatched to workers routed here.
+`createWorkerModelResolver()` selects a model for dispatched execution workers only. It registers no model-resolution hook and never changes the owner/main-session chain. The package contains no provider-specific model names or default routes: deployments configure `workerRoutes` in the plugin config.
 
-Workers may use only these subscription-backed models (no OpenAI API-key,
-OpenRouter, DeepSeek, Ollama, or other routes):
+`workerRoutes` is a set of deployment-owned candidate pools and the allow-list for automatic worker use:
 
-| Tier       | Candidates, in order                                | Use for                                  |
-| ---------- | --------------------------------------------------- | ---------------------------------------- |
-| `cheap`    | `anthropic/claude-haiku-4-5` → `openai/gpt-6-luna`  | bounded lookups, summaries, simple edits |
-| `standard` | `openai/gpt-6-luna` → `anthropic/claude-sonnet-5-5` | normal coding and execution              |
-| `strong`   | `openai/gpt-6-sol` → `anthropic/claude-opus-5-5`    | debugging, complex or high-stakes work   |
+| Tier       | Intended use                             |
+| ---------- | ---------------------------------------- |
+| `priority` | latency- or priority-sensitive work      |
+| `cheap`    | bounded lookups, summaries, simple edits |
+| `standard` | normal coding and execution              |
+| `strong`   | debugging, complex or high-stakes work   |
 
-- The first candidate wins. A later candidate is used only when an optional
-  `isAvailable(model, { tier, taskId })` callback returns something other than
-  `true` for the earlier ones. If no candidate is available, the resolver throws a
-  `WorkerRouteError` rather than falling back outside the list.
-- `task.model` (optional) requests one exact model. It must be one of the five
-  allow-listed models; any other reference is rejected (`model-not-allowed`).
-- `openai/gpt-6-astra` is approval-only: it is never a tier candidate and is
-  rejected by config overrides. A task may use it only by setting
-  `task.model: "openai/gpt-6-astra"` and passing a matching per-task approval,
-  `modelApprovals: [{ taskId, model: "openai/gpt-6-astra" }]`. Callers must
-  derive approvals from the owner's explicit message, never from worker output.
-- The plugin config `workerRoutes` (`cheap`/`standard`/`strong`) may narrow or
-  reorder these lists. It cannot add models, and invalid config fails
-  registration.
-- Workers created by the plugin handle check every model before any runtime call,
-  including models returned by a caller-supplied `resolveModel`. The library-level
-  `dispatchTask()` stays model-agnostic, so to use the allow-list there, pass
-  `createWorkerModelResolver()` or call `assertWorkerModel()`.
+Example (replace the placeholders with models actually configured on your host):
 
-The allow-list checks model references only. Whether `openai/*` refs run on the
-Codex subscription (and `anthropic/*` on the `claude-cli` runtime) depends on the
-host's auth order and runtime config, and this package does not verify that.
-The separate `model-router` plugin is untouched and unrelated.
+```json
+{
+  "workerRoutes": {
+    "cheap": ["provider/model-cheap"],
+    "standard": ["preferred-provider/model-standard", "alternate-provider/model-standard"],
+    "strong": ["preferred-provider/model-strong", "alternate-provider/model-strong"]
+  }
+}
+```
+
+- Candidate order is the deployment's preference order. When an availability callback is supplied, the resolver picks the first available candidate before dispatch. The selected worker model is not replaced after execution starts; normal task retry policy remains separate and is not provider/model failover.
+- A pool is also the allow-list: caller-supplied model resolutions and `task.model` must be present in the configured pool for that task's tier. With no configured candidate, resolution fails closed rather than using a package default.
+- Model references are opaque strings; this package does not enforce provider, subscription, or authentication policy. Deployments should include only models allowed by their own auth and budget policy.
 
 `renderTaskHandoff()` builds a bounded Markdown handoff draft from explicit status,
 decisions, evidence, next action, approvals, budget notes, and sources. It does not

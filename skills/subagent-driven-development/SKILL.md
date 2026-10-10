@@ -12,8 +12,8 @@ Per task: one fresh implementer, then one independent reviewer, then your own ve
    - **Done when:** the task fits one write scope and states how success is tested.
 
 2. Implement.
-   - Spawn an isolated worker (`context: "isolated"`, never `fork`; set `runTimeoutSeconds`) with the brief from `multi-agent-coordinator`: tests for behavior changes, no commits/push/PR unless Sebastian approved them (advisory unless host-enforced), report changed files and test output.
-   - Tier: standard for normal coding, strong for hard debugging or high-stakes work, using the approved mapping in AGENTS.md → Tools → Local notes and proposal §8.
+   - Spawn an isolated worker (`context: "isolated"`, never `fork`; set `runTimeoutSeconds`) with the brief from `multi-agent-coordinator`: tests for behavior changes, no commits/push/PR unless the owner approved them (advisory unless host-enforced), report changed files and test output.
+   - Tier: standard for normal coding, strong for hard debugging or high-stakes work, using the deployment's approved worker-tier policy.
    - **Done when:** the report lists changed paths and results of the task's tests.
 
 3. Review.
@@ -26,5 +26,5 @@ Per task: one fresh implementer, then one independent reviewer, then your own ve
    - **Done when:** fresh passing evidence exists for the task; only then start the next dependent task.
 
 5. Close out.
-   - After the last task run the plan's gates (`quality-gate-orchestrator`) and report. If you commit, tell Sebastian; pushing and merging need approval.
+   - After the last task run the plan's gates (`quality-gate-orchestrator`) and report. If you commit, tell the owner; pushing and merging need approval.
    - **Done when:** the report lists tasks, evidence, models used, and what awaits approval.

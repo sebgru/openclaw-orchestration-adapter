@@ -17,8 +17,9 @@ import { createBoundWorker } from "./worker-runtime.js";
  *
  * Model routing here is worker-only: no model-resolution hook is registered, so
  * the owner/main-session model chain is never touched. Every handle-created
- * worker rejects models outside the subscription allow-list (see model-routing.js),
- * including models returned by a caller-supplied resolveModel.
+ * worker rejects models outside configured route pools (see model-routing.js),
+ * including models returned by a caller-supplied resolveModel. The configured
+ * workerRoutes are the allow-list; the package defines no provider-specific models.
  */
 export function registerOrchestration(
   api,
@@ -35,39 +36,36 @@ export function registerOrchestration(
       }),
     { priority: 1000 },
   );
-  const createWorker = ({ agentId: id = agentId, buildMessage, modelApprovals } = {}) =>
+  const createWorker = ({ agentId: id = agentId, buildMessage } = {}) =>
     createBoundWorker({
       subagent: api.runtime.subagent,
       guard,
       agentId: id,
       buildMessage,
-      checkModel: (model, task) => assertWorkerModel(model, { task, modelApprovals }),
+      checkModel: (model, task) => assertWorkerModel(model, { routes, tier: task?.routeTier }),
     });
-  const resolverFor = ({ resolveModel, modelApprovals, isAvailable }) =>
-    resolveModel ?? createWorkerModelResolver({ routes, modelApprovals, isAvailable });
+  const resolverFor = ({ resolveModel, isAvailable }) =>
+    resolveModel ?? createWorkerModelResolver({ routes, isAvailable });
   const handle = {
     guard,
     routes,
     createWorker,
     /** Public dispatch entry: one validated task through a guard-bound worker. */
-    dispatchTask: (
-      task,
-      { resolveModel, modelApprovals, isAvailable, signal, agentId: id, buildMessage } = {},
-    ) =>
+    dispatchTask: (task, { resolveModel, isAvailable, signal, agentId: id, buildMessage } = {}) =>
       dispatchTask(task, {
-        worker: createWorker({ agentId: id, buildMessage, modelApprovals }),
-        resolveModel: resolverFor({ resolveModel, modelApprovals, isAvailable }),
+        worker: createWorker({ agentId: id, buildMessage }),
+        resolveModel: resolverFor({ resolveModel, isAvailable }),
         signal,
       }),
     /** Public dispatch entry: one dependency-ready wave with independent verification. */
     dispatchReadyBatch: (
       plan,
-      { agentId: id, buildMessage, resolveModel, modelApprovals, isAvailable, ...options } = {},
+      { agentId: id, buildMessage, resolveModel, isAvailable, ...options } = {},
     ) =>
       dispatchReadyBatch(plan, {
         ...options,
-        resolveModel: resolverFor({ resolveModel, modelApprovals, isAvailable }),
-        worker: createWorker({ agentId: id, buildMessage, modelApprovals }),
+        resolveModel: resolverFor({ resolveModel, isAvailable }),
+        worker: createWorker({ agentId: id, buildMessage }),
       }),
   };
   handles.set(api, handle);

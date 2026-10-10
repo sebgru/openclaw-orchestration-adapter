@@ -18,7 +18,7 @@ Sequence dependent work. The dependency graph lives only in the current plan or 
 
 3. Group into waves.
    - Wave 1 = steps with no unmet dependency; the next wave = steps whose dependencies finished and were verified.
-   - Cap each wave at the worker limit: default 1, maximum 4 and only when Sebastian approved parallelism; extra steps queue into the next wave.
+   - Cap each wave at the worker limit: default 1, maximum 4 and only when the owner approved parallelism; extra steps queue into the next wave.
    - **Done when:** the wave list covers every step exactly once.
 
 4. Run wave by wave.

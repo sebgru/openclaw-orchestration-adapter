@@ -131,7 +131,7 @@ test("completion worker uses tool-free complete() and never binds a session", as
   const worker = createBoundWorker({ subagent, guard, agentId: "main" });
   const out = await dispatchTask(task({ mode: "completion", allowedTools: [] }), {
     worker,
-    resolveModel: () => "openai/gpt-6-luna",
+    resolveModel: () => "example/model-fast",
   });
   assert.equal(out.output.text, "plan");
   assert.deepEqual(
@@ -148,8 +148,8 @@ test("tools worker binds before run, enforces grant during run, cleans up after"
     async run(a) {
       assert.equal(guard.size, 1, "bound before run()");
       assert.equal(a.toolsAlsoAllow, undefined);
-      assert.equal(a.provider, "openai");
-      assert.equal(a.model, "gpt-6-luna");
+      assert.equal(a.provider, "example");
+      assert.equal(a.model, "model-fast");
       assert.equal(
         guard.check({ sessionKey: a.sessionKey, runId: "run-9", toolName: "read" }).block,
         true,
@@ -165,7 +165,7 @@ test("tools worker binds before run, enforces grant during run, cleans up after"
     },
   });
   const worker = createBoundWorker({ subagent, guard, agentId: "main" });
-  const out = await dispatchTask(task(), { worker, resolveModel: () => "openai/gpt-6-luna" });
+  const out = await dispatchTask(task(), { worker, resolveModel: () => "example/model-fast" });
   assert.equal(out.output.text, "answer");
   assert.equal(guard.size, 0);
   assert.equal(
@@ -247,7 +247,7 @@ test("plugin registers a priority hook that enforces the guard; disabled by defa
   };
   plugin.register(api);
   assert.equal(hooks.length, 0);
-  api.pluginConfig = { enabled: true };
+  api.pluginConfig = { enabled: true, workerRoutes: { standard: ["example/model-fast"] } };
   plugin.register(api);
   assert.equal(hooks[0][0], "before_tool_call");
 
@@ -291,9 +291,12 @@ test("contract: run() resolves at admission; a tool call racing confirm() is hel
     },
   });
   api.runtime.subagent = subagent;
-  const handle = registerOrchestration(api, { guard });
+  const handle = registerOrchestration(api, {
+    guard,
+    workerRoutes: { standard: ["example/model-fast"] },
+  });
   const worker = handle.createWorker({ agentId: "main" });
-  const out = await dispatchTask(task(), { worker, resolveModel: () => "openai/gpt-6-luna" });
+  const out = await dispatchTask(task(), { worker, resolveModel: () => "example/model-fast" });
   assert.equal(out.output.text, "answer");
   assert.deepEqual(order, ["admitted", "first-tool-call", "wait"]);
 });

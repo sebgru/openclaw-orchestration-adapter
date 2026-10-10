@@ -13,7 +13,7 @@ Get a reviewer who has not seen the implementer's reasoning, so the review check
    - **Done when:** the package names the diff range and requirements and nothing private.
 
 2. Dispatch the reviewer.
-   - Spawn an isolated, read-only worker (`context: "isolated"`, never `fork`; `runTimeoutSeconds` set; prohibit edits/push/network in the brief — advisory unless the host enforces a read-only tool policy, so say which). Pick a model different from the implementer where available; use the strong tier for security-sensitive or cross-repo changes according to AGENTS.md → Tools → Local notes and proposal §8.
+   - Spawn an isolated, read-only worker (`context: "isolated"`, never `fork`; `runTimeoutSeconds` set; prohibit edits/push/network in the brief — advisory unless the host enforces a read-only tool policy, so say which). Pick a model different from the implementer where available; use the strong tier for security-sensitive or cross-repo changes according to the deployment's worker-tier policy.
    - Ask for findings with severity (blocking / non-blocking), file:line, and a concrete failure scenario each; ask it to say explicitly what it did not check.
    - **Done when:** the spawn was accepted and its completion is awaited via `sessions_yield`.
 

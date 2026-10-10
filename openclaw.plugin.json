@@ -37,21 +37,24 @@
       "workerRoutes": {
         "type": "object",
         "additionalProperties": false,
-        "description": "Worker-only tier overrides; may narrow or reorder the subscription allow-list, never extend it. Does not affect the main-session model chain.",
+        "description": "Deployment-owned worker candidate pools and automatic-use allow-list. Candidate order sets preference; a failed execution does not trigger model failover.",
         "properties": {
+          "priority": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
           "cheap": {
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
             "items": {
               "type": "string",
-              "enum": [
-                "openai/gpt-6-luna",
-                "anthropic/claude-haiku-4-5",
-                "openai/gpt-6-sol",
-                "anthropic/claude-sonnet-5-5",
-                "anthropic/claude-opus-5-5"
-              ]
+              "minLength": 1
             }
           },
           "standard": {
@@ -60,13 +63,7 @@
             "uniqueItems": true,
             "items": {
               "type": "string",
-              "enum": [
-                "openai/gpt-6-luna",
-                "anthropic/claude-haiku-4-5",
-                "openai/gpt-6-sol",
-                "anthropic/claude-sonnet-5-5",
-                "anthropic/claude-opus-5-5"
-              ]
+              "minLength": 1
             }
           },
           "strong": {
@@ -75,13 +72,7 @@
             "uniqueItems": true,
             "items": {
               "type": "string",
-              "enum": [
-                "openai/gpt-6-luna",
-                "anthropic/claude-haiku-4-5",
-                "openai/gpt-6-sol",
-                "anthropic/claude-sonnet-5-5",
-                "anthropic/claude-opus-5-5"
-              ]
+              "minLength": 1
             }
           }
         }

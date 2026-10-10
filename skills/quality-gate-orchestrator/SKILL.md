@@ -13,7 +13,7 @@ Gates live in the active plan or handoff text; there is no gate database or stat
 
 2. Evaluate each gate with fresh evidence (use `verification-before-completion`).
    - Result is one of `pass`, `fail`, `blocked` (cannot run; state why), or `waived`.
-   - A waiver needs a visible rationale and Sebastian's approval; workers and the coordinator cannot waive required gates on their own.
+   - A waiver needs a visible rationale and the owner's approval; workers and the coordinator cannot waive required gates on their own.
    - **Done when:** every gate has a result with its evidence.
 
 3. Decide readiness.

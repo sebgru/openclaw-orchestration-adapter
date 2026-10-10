@@ -10,7 +10,7 @@ const handoff = {
   decisions: [
     {
       text: "Keep dispatch disabled until the runtime gate passes.",
-      approvedBy: "Sebastian",
+      approvedBy: "the owner",
       approvedAt: "2026-10-05",
     },
   ],
@@ -22,8 +22,8 @@ const handoff = {
   ],
   nextAction: "Verify the supported usage event API before implementing token enforcement.",
   owner: "Main agent",
-  approvalsNeeded: ["Sebastian review before activation"],
-  modelsAndBudgets: ["openai/gpt-6-luna; maxTokens 8000; observed usage unavailable"],
+  approvalsNeeded: ["the owner review before activation"],
+  modelsAndBudgets: ["example/model-fast; maxTokens 8000; observed usage unavailable"],
   sources: ["memory/handoffs/superpowers-memory-adapter-orchestration-proposal.md §8"],
 };
 
@@ -32,9 +32,9 @@ test("renders a complete, fixed-section handoff with evidence and provenance", (
   assert.match(markdown, /^# Search contract migration/m);
   assert.match(markdown, /Written: 2026-10-08T21:00:00\.000Z/);
   assert.match(markdown, /Status: blocked/);
-  assert.match(markdown, /approved by Sebastian, 2026-10-05/);
+  assert.match(markdown, /approved by the owner, 2026-10-05/);
   assert.match(markdown, /done — Add the versioned task contract; evidence: src\/contracts\.js/);
-  assert.match(markdown, /Approvals still needed[\s\S]*Sebastian review before activation/);
+  assert.match(markdown, /Approvals still needed[\s\S]*the owner review before activation/);
   assert.match(markdown, /Treat this handoff as evidence to re-verify/);
 });
 
