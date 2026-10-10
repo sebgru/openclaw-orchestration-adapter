@@ -291,7 +291,10 @@ test("contract: run() resolves at admission; a tool call racing confirm() is hel
     },
   });
   api.runtime.subagent = subagent;
-  const handle = registerOrchestration(api, { guard, workerRoutes: { standard: ["example/model-fast"] } });
+  const handle = registerOrchestration(api, {
+    guard,
+    workerRoutes: { standard: ["example/model-fast"] },
+  });
   const worker = handle.createWorker({ agentId: "main" });
   const out = await dispatchTask(task(), { worker, resolveModel: () => "example/model-fast" });
   assert.equal(out.output.text, "answer");

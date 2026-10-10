@@ -51,10 +51,7 @@ export function registerOrchestration(
     routes,
     createWorker,
     /** Public dispatch entry: one validated task through a guard-bound worker. */
-    dispatchTask: (
-      task,
-      { resolveModel, isAvailable, signal, agentId: id, buildMessage } = {},
-    ) =>
+    dispatchTask: (task, { resolveModel, isAvailable, signal, agentId: id, buildMessage } = {}) =>
       dispatchTask(task, {
         worker: createWorker({ agentId: id, buildMessage }),
         resolveModel: resolverFor({ resolveModel, isAvailable }),

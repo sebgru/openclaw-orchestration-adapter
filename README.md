@@ -44,12 +44,12 @@ routing, and cross-channel identity/resume remains deferred in v1.
 
 `workerRoutes` is a set of deployment-owned candidate pools and the allow-list for automatic worker use:
 
-| Tier | Intended use |
-| --- | --- |
-| `priority` | latency- or priority-sensitive work |
-| `cheap` | bounded lookups, summaries, simple edits |
-| `standard` | normal coding and execution |
-| `strong` | debugging, complex or high-stakes work |
+| Tier       | Intended use                             |
+| ---------- | ---------------------------------------- |
+| `priority` | latency- or priority-sensitive work      |
+| `cheap`    | bounded lookups, summaries, simple edits |
+| `standard` | normal coding and execution              |
+| `strong`   | debugging, complex or high-stakes work   |
 
 Example (replace the placeholders with models actually configured on your host):
 
@@ -66,7 +66,6 @@ Example (replace the placeholders with models actually configured on your host):
 - Candidate order is the deployment's preference order. When an availability callback is supplied, the resolver picks the first available candidate before dispatch. The selected worker model is not replaced after execution starts; normal task retry policy remains separate and is not provider/model failover.
 - A pool is also the allow-list: caller-supplied model resolutions and `task.model` must be present in the configured pool for that task's tier. With no configured candidate, resolution fails closed rather than using a package default.
 - Model references are opaque strings; this package does not enforce provider, subscription, or authentication policy. Deployments should include only models allowed by their own auth and budget policy.
-
 
 `renderTaskHandoff()` builds a bounded Markdown handoff draft from explicit status,
 decisions, evidence, next action, approvals, budget notes, and sources. It does not

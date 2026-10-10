@@ -48,13 +48,27 @@ function fakeApi(pluginConfig) {
   const hooks = [];
   const calls = [];
   const subagent = {
-    async complete(a) { calls.push(["complete", a]); return { text: "ok" }; },
-    async run(a) { calls.push(["run", a]); return { runId: "run-1", sessionKey: a.sessionKey }; },
-    async waitForRun() { return { status: "ok" }; },
-    async getSessionMessages() { return { messages: [{ role: "assistant", content: "done" }] }; },
+    async complete(a) {
+      calls.push(["complete", a]);
+      return { text: "ok" };
+    },
+    async run(a) {
+      calls.push(["run", a]);
+      return { runId: "run-1", sessionKey: a.sessionKey };
+    },
+    async waitForRun() {
+      return { status: "ok" };
+    },
+    async getSessionMessages() {
+      return { messages: [{ role: "assistant", content: "done" }] };
+    },
     async deleteSession() {},
   };
-  return { api: { on: (...a) => hooks.push(a), runtime: { subagent }, pluginConfig }, hooks, calls };
+  return {
+    api: { on: (...a) => hooks.push(a), runtime: { subagent }, pluginConfig },
+    hooks,
+    calls,
+  };
 }
 
 test("package defines route tiers but no provider/model defaults", () => {
@@ -69,16 +83,27 @@ test("configured route arrays are ordered candidate pools and become the allow-l
   assert.equal(await resolve("cheap", task({ routeTier: "cheap" })), "example/cheap");
   assert.equal(await resolve("standard", task()), "example/preferred-standard");
   assert.equal(await resolve("strong", task({ routeTier: "strong" })), "example/preferred-strong");
-  assert.equal(assertWorkerModel("example/alternate-standard", { routes: POOL }), "example/alternate-standard");
-  assert.throws(() => assertWorkerModel(UNKNOWN_MODEL, { routes: POOL }), { code: "model-not-allowed" });
-  assert.throws(() => assertWorkerModel("example/preferred-strong", { routes: POOL, tier: "standard" }), { code: "model-not-allowed" });
+  assert.equal(
+    assertWorkerModel("example/alternate-standard", { routes: POOL }),
+    "example/alternate-standard",
+  );
+  assert.throws(() => assertWorkerModel(UNKNOWN_MODEL, { routes: POOL }), {
+    code: "model-not-allowed",
+  });
+  assert.throws(
+    () => assertWorkerModel("example/preferred-strong", { routes: POOL, tier: "standard" }),
+    { code: "model-not-allowed" },
+  );
 });
 
 test("availability selection picks the highest-ranked available candidate once", async () => {
   const seen = [];
   const resolve = createWorkerModelResolver({
     routes: POOL,
-    isAvailable: async (model, ctx) => { seen.push([model, ctx.tier, ctx.taskId]); return model === "example/alternate-standard"; },
+    isAvailable: async (model, ctx) => {
+      seen.push([model, ctx.tier, ctx.taskId]);
+      return model === "example/alternate-standard";
+    },
   });
   assert.equal(await resolve("standard", task()), "example/alternate-standard");
   assert.deepEqual(seen, [
@@ -92,10 +117,20 @@ test("availability selection picks the highest-ranked available candidate once",
 test("resolver does not select an unconfigured pool, model, or tier", async () => {
   const resolve = createWorkerModelResolver({ routes: POOL });
   await assert.rejects(resolve("unknown", task()), { code: "unknown-tier" });
-  await assert.rejects(createWorkerModelResolver()("priority", task({ routeTier: "priority" })), { code: "unavailable" });
-  await assert.rejects(resolve("standard", task({ model: UNKNOWN_MODEL })), { code: "model-not-allowed" });
-  await assert.rejects(resolve("cheap", task({ routeTier: "cheap", model: "example/preferred-standard" })), { code: "model-not-allowed" });
-  assert.throws(() => createWorkerModelResolver({ routes: POOL, isAvailable: true }), /isAvailable/);
+  await assert.rejects(createWorkerModelResolver()("priority", task({ routeTier: "priority" })), {
+    code: "unavailable",
+  });
+  await assert.rejects(resolve("standard", task({ model: UNKNOWN_MODEL })), {
+    code: "model-not-allowed",
+  });
+  await assert.rejects(
+    resolve("cheap", task({ routeTier: "cheap", model: "example/preferred-standard" })),
+    { code: "model-not-allowed" },
+  );
+  assert.throws(
+    () => createWorkerModelResolver({ routes: POOL, isAvailable: true }),
+    /isAvailable/,
+  );
 });
 
 test("route configuration validates tier names, lists, entries, and duplicates", () => {
@@ -107,7 +142,8 @@ test("route configuration validates tier names, lists, entries, and duplicates",
     { cheap: "example/model" },
     { cheap: ["example/model", "example/model"] },
     { cheap: [""] },
-  ]) assert.throws(() => normalizeWorkerRoutes(routes), TypeError);
+  ])
+    assert.throws(() => normalizeWorkerRoutes(routes), TypeError);
   assert.deepEqual(normalizeWorkerRoutes({ strong: ["example/a"] }).strong, ["example/a"]);
 });
 
@@ -118,9 +154,13 @@ test("task contract accepts the priority tier and an optional model reference", 
 
 test("library dispatch uses its explicitly supplied resolver", async () => {
   let ran = false;
-  const worker = async () => { ran = true; return {}; };
+  const worker = async () => {
+    ran = true;
+    return {};
+  };
   const out = await dispatchTask(task({ routeTier: "strong" }), {
-    worker, resolveModel: createWorkerModelResolver({ routes: POOL }),
+    worker,
+    resolveModel: createWorkerModelResolver({ routes: POOL }),
   });
   assert.equal(out.model, "example/preferred-strong");
   assert.equal(ran, true);
@@ -129,7 +169,10 @@ test("library dispatch uses its explicitly supplied resolver", async () => {
 test("plugin applies deployment routes and invokes one selected model", async () => {
   const { api, hooks, calls } = fakeApi({ enabled: true, agentId: "main", workerRoutes: POOL });
   plugin.register(api);
-  assert.deepEqual(hooks.map((h) => h[0]), ["before_tool_call"]);
+  assert.deepEqual(
+    hooks.map((h) => h[0]),
+    ["before_tool_call"],
+  );
   const out = await getOrchestration(api).dispatchTask(task());
   assert.equal(out.model, "example/preferred-standard");
   assert.equal(calls.filter((c) => c[0] === "run").length, 1);
@@ -147,9 +190,12 @@ test("handle rejects caller-resolved models outside configured pools before runt
   await assert.rejects(handle.dispatchTask(task(), { resolveModel: () => UNKNOWN_MODEL }), {
     name: "WorkerRouteError",
   });
-  await assert.rejects(handle.dispatchTask(task(), { resolveModel: () => "example/preferred-strong" }), {
-    name: "WorkerRouteError",
-  });
+  await assert.rejects(
+    handle.dispatchTask(task(), { resolveModel: () => "example/preferred-strong" }),
+    {
+      name: "WorkerRouteError",
+    },
+  );
   assert.equal(calls.length, 0);
   assert.equal(handle.guard.size, 0);
 });

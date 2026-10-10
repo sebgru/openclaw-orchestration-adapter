@@ -52,10 +52,7 @@ function configuredModels(routes) {
 /** Require a model to be explicitly included in a configured worker pool. */
 export function assertWorkerModel(model, { routes, tier } = {}) {
   const table = normalizeWorkerRoutes(routes);
-  if (
-    configuredModels(table).has(model) &&
-    (tier === undefined || table[tier]?.includes(model))
-  ) {
+  if (configuredModels(table).has(model) && (tier === undefined || table[tier]?.includes(model))) {
     return model;
   }
   throw new WorkerRouteError(

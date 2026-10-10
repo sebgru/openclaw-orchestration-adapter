@@ -65,7 +65,11 @@ test("default export stays inactive without explicit enablement", () => {
 });
 
 test("register() wires the hook and a handle whose dispatch uses the guard-bound worker", async () => {
-  const { api, hooks, calls } = fakeApi({ enabled: true, agentId: "main", workerRoutes: { standard: ["example/model-fast", "example/model-cheap"] } });
+  const { api, hooks, calls } = fakeApi({
+    enabled: true,
+    agentId: "main",
+    workerRoutes: { standard: ["example/model-fast", "example/model-cheap"] },
+  });
   plugin.register(api);
   assert.equal(hooks.length, 1);
   assert.equal(hooks[0][0], "before_tool_call");
@@ -87,7 +91,10 @@ test("register() wires the hook and a handle whose dispatch uses the guard-bound
 
 test("dispatchReadyBatch is wired through the handle and still requires a verifier", async () => {
   const { api } = fakeApi({ enabled: true, agentId: "main" });
-  const handle = registerOrchestration(api, { agentId: "main", workerRoutes: { standard: ["example/model-fast"] } });
+  const handle = registerOrchestration(api, {
+    agentId: "main",
+    workerRoutes: { standard: ["example/model-fast"] },
+  });
   await assert.rejects(handle.dispatchReadyBatch({ tasks: [] }, {}), /verifier/);
 });
 
