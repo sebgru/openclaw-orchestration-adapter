@@ -106,6 +106,8 @@ test("manifest declares only documented fields and an agentId pattern", () => {
 });
 
 test("packaging metadata ships the manifest and any declared skill directory", () => {
+  assert.deepEqual(pkg.openclaw.extensions, ["./src/plugin.js"]);
+  assert.ok(existsSync(join(root, pkg.openclaw.extensions[0])));
   assert.ok(pkg.files.includes("openclaw.plugin.json"));
   assert.ok(pkg.files.includes("src"));
   assert.ok(pkg.files.includes("skills"));
