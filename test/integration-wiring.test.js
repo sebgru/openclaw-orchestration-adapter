@@ -168,3 +168,98 @@ test("cancellation revokes the binding so later tool calls fail closed; runtime 
   );
   assert.equal(late.block, true);
 });
+
+test("fake host holds an early dispatch tool call through run admission and enforces its grant", async () => {
+  const hooks = [];
+  const registeredTools = [];
+  const context = {
+    senderIsOwner: true,
+    requesterSenderId: "owner-1",
+    agentId: "main",
+    sessionKey: "agent:main:main",
+    deliveryContext: { channel: "webchat" },
+  };
+  const beforeToolCall = (event, ctx) =>
+    hooks.find(([name]) => name === "before_tool_call")[1](event, ctx);
+  let acceptedSessionKey;
+  let racedToolCall;
+  let raceWasHeld;
+  let admissionChecks;
+  const subagent = {
+    async run(args) {
+      acceptedSessionKey = args.sessionKey;
+      let settled = false;
+      racedToolCall = beforeToolCall(
+        { toolName: "read", runId: "host-run-1" },
+        { sessionKey: args.sessionKey },
+      ).then((result) => {
+        settled = true;
+        return result;
+      });
+      // Give the hook a turn to register its admission waiter before run()
+      // returns the host-issued runId/sessionKey pair.
+      await Promise.resolve();
+      raceWasHeld = !settled;
+      return { runId: "host-run-1", sessionKey: args.sessionKey };
+    },
+    async waitForRun() {
+      const allowed = await racedToolCall;
+      const wrongRun = await beforeToolCall(
+        { toolName: "read", runId: "host-run-other" },
+        { sessionKey: acceptedSessionKey },
+      );
+      const ungranted = await beforeToolCall(
+        { toolName: "write", runId: "host-run-1" },
+        { sessionKey: acceptedSessionKey },
+      );
+      const wrongSession = await beforeToolCall(
+        { toolName: "read", runId: "host-run-1" },
+        { sessionKey: `${acceptedSessionKey}-other` },
+      );
+      admissionChecks = { allowed, wrongRun, ungranted, wrongSession };
+      return { status: "ok" };
+    },
+    async getSessionMessages() {
+      return { messages: [{ role: "assistant", content: "host harness complete" }] };
+    },
+    async deleteSession() {},
+  };
+  const api = {
+    on: (...args) => hooks.push(args),
+    registerTool: (...args) => registeredTools.push(args),
+    runtime: { subagent },
+    pluginConfig: {
+      enabled: true,
+      agentId: "main",
+      workerRoutes: { standard: ["example/model-fast"] },
+      dispatch: { allowedTools: ["read"], maxCalls: 2, maxTimeoutMs: 2_000, maxTokens: 500 },
+    },
+  };
+
+  plugin.register(api);
+  assert.equal(hooks.length, 1);
+  assert.equal(hooks[0][0], "before_tool_call");
+  assert.equal(registeredTools.length, 1);
+  const [factory, registration] = registeredTools[0];
+  assert.deepEqual(registration, { name: "orchestration_dispatch", optional: true });
+  assert.equal(factory({ ...context, senderIsOwner: false }), null);
+  const tool = factory(context);
+  assert.ok(tool);
+
+  const result = await tool.execute("call-1", {
+    goal: "read one item",
+    successCriteria: ["return the item"],
+    routeTier: "standard",
+    mode: "tools",
+    allowedTools: ["read"],
+    budget: { maxCalls: 2, timeoutMs: 1_500, maxTokens: 300 },
+  });
+
+  assert.equal(raceWasHeld, true);
+  assert.equal(admissionChecks.allowed.block, undefined);
+  assert.equal(admissionChecks.wrongRun.block, true);
+  assert.equal(admissionChecks.ungranted.block, true);
+  assert.equal(admissionChecks.wrongSession.block, true);
+  assert.equal(result.details.output.text, "host harness complete");
+  assert.equal(getOrchestration(api).guard.size, 0);
+});
