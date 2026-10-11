@@ -14,6 +14,11 @@
   "exports": {
     ".": "./src/index.js"
   },
+  "openclaw": {
+    "extensions": [
+      "./src/plugin.js"
+    ]
+  },
   "files": [
     "src",
     "skills",
