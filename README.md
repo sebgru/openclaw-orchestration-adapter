@@ -40,10 +40,23 @@ routing, and cross-channel identity/resume remains deferred in v1.
 
 ### Agent-callable dispatch tool
 
-When the plugin config contains a `dispatch` block, the plugin registers one optional agent tool, `orchestration_dispatch`, with `api.registerTool(factory, { name, optional: true })`. It is hidden unless an operator allowlists it (`tools.allow`), the requester is the verified owner (`senderIsOwner`), the run is not sandboxed, and the host context supplies `requesterSenderId`, `agentId`, `sessionKey`, and `deliveryContext.channel`. Any missing field hides the tool and makes `execute` fail closed; no placeholder identity is substituted.
+When the plugin config contains a `dispatch` block, the plugin registers one optional agent tool, `orchestration_dispatch`, with `api.registerTool(factory, { name, optional: true })`. It is hidden unless an operator opts in to it with `tools.alsoAllow: ["orchestration_dispatch"]`, the requester is the verified owner (`senderIsOwner`), the run is not sandboxed, and the host context supplies `requesterSenderId`, `agentId`, `sessionKey`, and `deliveryContext.channel`. Any missing field hides the tool and makes `execute` fail closed; no placeholder identity is substituted.
+
+Use `tools.alsoAllow`, not `tools.allow`: `tools.allow` is a restrictive allowlist, so `"allow": ["orchestration_dispatch"]` removes every other tool (including `read`, `exec`, and `sessions_spawn`) from the active profile. The tool is offered only in owner-originated turns that carry all of the fields above; delegated worker runs without a trusted requester identity do not see it.
 
 ```json
 {
+  "tools": {
+    "alsoAllow": ["orchestration_dispatch"]
+  }
+}
+```
+
+Plugin config (`plugins.entries.openclaw-orchestration-adapter.config`); without `"enabled": true` the plugin registers nothing:
+
+```json
+{
+  "enabled": true,
   "dispatch": {
     "allowedTools": ["read"],
     "maxCalls": 10,
