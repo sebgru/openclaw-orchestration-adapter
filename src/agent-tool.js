@@ -78,9 +78,13 @@ function trustedScope(context) {
   if (!isRecord(context)) return undefined;
   if (context.senderIsOwner !== true || context.sandboxed === true) return undefined;
   const channel = context.deliveryContext?.channel;
-  if (![context.requesterSenderId, context.agentId, context.sessionKey, channel].every(nonEmpty)) {
+  // Requester identity: the transport sender id, or the host-verified operator
+  // profile id (`requesterProfileId`, authenticated UI runs). Each is a distinct
+  // host-supplied fact; neither is derived from the other or from senderIsOwner.
+  if (!nonEmpty(context.requesterSenderId) && !nonEmpty(context.requesterProfileId)) {
     return undefined;
   }
+  if (![context.agentId, context.sessionKey, channel].every(nonEmpty)) return undefined;
   return { tenantId: context.agentId, channel, conversationId: context.sessionKey };
 }
 
@@ -151,7 +155,8 @@ export function buildDispatchTask(params, limits, context) {
  * Agent tool factory for api.registerTool(factory, { name, optional: true }).
  * Returns null (tool hidden for the run) unless a dispatch ceiling is configured,
  * the requester is the verified owner (senderIsOwner), the run is not sandboxed,
- * and requesterSenderId, agentId, sessionKey, and deliveryContext.channel are present.
+ * a requester identity (requesterSenderId or requesterProfileId) is present, and
+ * agentId, sessionKey, and deliveryContext.channel are present.
  * execute() re-validates the same context and never substitutes defaults.
  * A single dispatch has no independent verifier, so output is always reported
  * as unverified evidence for the calling agent to check.

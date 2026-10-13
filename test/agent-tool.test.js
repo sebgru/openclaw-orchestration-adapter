@@ -152,6 +152,43 @@ test("execute fails closed when context lacks trusted identity, before any run",
   assert.equal(runs.length, 0);
 });
 
+test("host-verified requesterProfileId is accepted as a distinct identity, still fail-closed", () => {
+  const limits = normalizeDispatchConfig(config.dispatch);
+  const profileOwner = { ...owner, requesterSenderId: undefined, requesterProfileId: "profile-1" };
+  const task = buildDispatchTask(valid, limits, profileOwner);
+  assert.deepEqual(task.scope, {
+    tenantId: "main",
+    channel: "webchat",
+    conversationId: "agent:main:main",
+  });
+  const { api, tools } = fakeApi(config);
+  plugin.register(api);
+  assert.ok(tools[0][0](profileOwner));
+  for (const bad of [
+    { ...profileOwner, requesterProfileId: " " },
+    { ...profileOwner, requesterProfileId: 42 },
+    { ...profileOwner, senderIsOwner: false },
+    { ...profileOwner, senderIsOwner: "true" },
+    { ...profileOwner, sandboxed: true },
+    { ...profileOwner, agentId: undefined },
+    { ...profileOwner, sessionKey: "" },
+    { ...profileOwner, deliveryContext: undefined },
+  ]) {
+    assert.throws(() => buildDispatchTask(valid, limits, bad), /trusted requester/);
+    assert.equal(tools[0][0](bad), null);
+  }
+});
+
+test("execute fails closed when the profile identity disappears after creation", async () => {
+  const { api, tools, runs } = fakeApi(config);
+  plugin.register(api);
+  const ctx = { ...owner, requesterSenderId: undefined, requesterProfileId: "profile-1" };
+  const tool = tools[0][0](ctx);
+  ctx.requesterProfileId = undefined;
+  await assert.rejects(tool.execute("c", valid), /trusted requester/);
+  assert.equal(runs.length, 0);
+});
+
 test("route pools still gate the model: unconfigured tier fails closed", async () => {
   const { api, tools, runs } = fakeApi(config);
   plugin.register(api);
