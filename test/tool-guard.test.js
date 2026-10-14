@@ -329,3 +329,24 @@ test("a held call is blocked when admission never confirms, or the binding is re
   g.confirm(KEY, { runId: "run-1", sessionKey: KEY });
   assert.match((await racing).blockReason, /runId does not match/);
 });
+
+test("toolCallId dedupes repeated hook checks and blocks reuse for another tool", () => {
+  const guard = new ToolGuard();
+  guard.bind({
+    sessionKey: KEY,
+    taskId: "t",
+    allowedTools: ["read", "write"],
+    budget: { maxCalls: 1, timeoutMs: 1000 },
+  });
+  guard.confirm(KEY, { runId: "run-1", sessionKey: KEY });
+  // Several registered hooks observing the same logical call charge it once.
+  assert.deepEqual(call(guard, { toolCallId: "c1" }), {});
+  assert.deepEqual(call(guard, { toolCallId: "c1" }), {});
+  // Reusing the id for a different granted tool is refused, not re-charged.
+  assert.match(
+    call(guard, { toolName: "write", toolCallId: "c1" }).blockReason,
+    /reused for another tool/,
+  );
+  // A fresh call id with the budget already spent still blocks.
+  assert.match(call(guard, { toolCallId: "c2" }).blockReason, /call budget/);
+});

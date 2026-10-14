@@ -12,6 +12,45 @@ import {
 import { ToolGuard } from "./tool-guard.js";
 import { createBoundWorker } from "./worker-runtime.js";
 
+const SHARED_GUARD = Symbol.for("openclaw-orchestration-adapter.toolGuard");
+
+/**
+ * Process-wide default guard. The host may call register(api) more than once
+ * (separate registry loads, possibly re-imported module copies) and run the
+ * agent-tool factory from one registration while before_tool_call fires from
+ * another. Per-registration guards would split bind/confirm from the hook
+ * check, so the default guard is shared via a globalThis symbol, which also
+ * survives duplicate module instances. Because every registration also adds
+ * its own before_tool_call hook on that shared guard, one logical call may be
+ * checked several times; the hook forwards event.toolCallId so the guard
+ * charges each call once (see ToolGuard.check).
+ */
+export function sharedToolGuard() {
+  const existing = globalThis[SHARED_GUARD];
+  if (isGuardLike(existing)) return existing;
+  // Missing or tampered slot: install a fresh guard (no bindings, so workers
+  // fail closed) as a non-writable, non-enumerable property.
+  const guard = new ToolGuard();
+  Object.defineProperty(globalThis, SHARED_GUARD, {
+    value: guard,
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+  return guard;
+}
+
+// Duck-typed on purpose: a re-imported module copy has its own ToolGuard class.
+function isGuardLike(g) {
+  return (
+    g !== null &&
+    typeof g === "object" &&
+    ["bind", "confirm", "release", "check", "checkWhenAdmitted"].every(
+      (m) => typeof g[m] === "function",
+    )
+  );
+}
+
 /**
  * Register the enforcement hook on a public plugin API and return the runtime
  * handle. Uses only api.on("before_tool_call") and api.runtime.subagent.
@@ -32,7 +71,7 @@ import { createBoundWorker } from "./worker-runtime.js";
  */
 export function registerOrchestration(
   api,
-  { guard = new ToolGuard(), agentId, workerRoutes, dispatch } = {},
+  { guard = sharedToolGuard(), agentId, workerRoutes, dispatch } = {},
 ) {
   const routes = normalizeWorkerRoutes(workerRoutes);
   const dispatchLimits = normalizeDispatchConfig(dispatch);
@@ -43,6 +82,7 @@ export function registerOrchestration(
         sessionKey: ctx?.sessionKey,
         runId: event?.runId ?? ctx?.runId,
         toolName: event?.toolName,
+        toolCallId: event?.toolCallId,
       }),
     { priority: 1000 },
   );
