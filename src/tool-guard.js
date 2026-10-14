@@ -81,6 +81,7 @@ export class ToolGuard {
       maxCalls: budget.maxCalls,
       deadline: this.#now() + budget.timeoutMs,
       calls: 0,
+      charged: new Map(),
       runId: null,
     });
   }
@@ -138,8 +139,14 @@ export class ToolGuard {
     return this.check(input);
   }
 
-  /** Decide a before_tool_call. Returns {} to allow or a terminal block result. */
-  check({ sessionKey, runId, toolName }) {
+  /**
+   * Decide a before_tool_call. Returns {} to allow or a terminal block result.
+   * `toolCallId` (optional host event field) identifies one logical call: when
+   * several registered hooks see the same call, it is charged against maxCalls
+   * once. Without an id calls cannot be told apart and each check is charged
+   * (fail closed: over-counting never grants extra budget).
+   */
+  check({ sessionKey, runId, toolName, toolCallId }) {
     if (!this.isWorkerSession(sessionKey)) return {};
     const binding = this.#bindings.get(sessionKey);
     if (!binding) return blocked("worker call has no active binding");
@@ -150,8 +157,15 @@ export class ToolGuard {
       return blocked("delegation is not permitted");
     }
     if (!binding.allowed.has(toolName)) return blocked(`tool ${toolName} is not granted`);
+    const id = typeof toolCallId === "string" && toolCallId ? toolCallId : null;
+    if (id !== null && binding.charged.has(id)) {
+      if (binding.charged.get(id) !== toolName)
+        return blocked("toolCallId reused for another tool");
+      return {};
+    }
     if (binding.calls >= binding.maxCalls) return blocked("tool call budget exhausted");
     binding.calls += 1;
+    if (id !== null) binding.charged.set(id, toolName);
     return {};
   }
 }

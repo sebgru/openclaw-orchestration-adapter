@@ -265,3 +265,103 @@ test("fake host holds an early dispatch tool call through run admission and enfo
   assert.equal(result.details.output.text, "host harness complete");
   assert.equal(getOrchestration(api).guard.size, 0);
 });
+
+test("separate registrations share one default guard across factory/hook lifetimes", async () => {
+  const a = fakeApi({ enabled: true, agentId: "main", workerRoutes: undefined });
+  const b = fakeApi({ enabled: true, agentId: "main", workerRoutes: undefined });
+  const ha = registerOrchestration(a.api, { agentId: "main" });
+  const hb = registerOrchestration(b.api, { agentId: "main" });
+  assert.equal(ha.guard, hb.guard);
+  const key = "agent:main:subagent:oca-split";
+  try {
+    ha.guard.bind({
+      sessionKey: key,
+      taskId: "t",
+      allowedTools: ["read"],
+      budget: { maxCalls: 1, timeoutMs: 1000 },
+    });
+    ha.guard.confirm(key, { runId: "r1", sessionKey: key });
+    // Hook registered by the *other* registration must see the binding.
+    const result = await b.hooks[0][1]({ toolName: "read", runId: "r1" }, { sessionKey: key });
+    assert.deepEqual(result, {});
+  } finally {
+    ha.guard.release(key);
+  }
+});
+
+function bindShared(h, key, maxCalls) {
+  h.guard.bind({
+    sessionKey: key,
+    taskId: "t",
+    allowedTools: ["read"],
+    budget: { maxCalls, timeoutMs: 1000 },
+  });
+  h.guard.confirm(key, { runId: "r1", sessionKey: key });
+}
+
+test("two registrations charge each logical call once when toolCallId is present", async () => {
+  const a = fakeApi({ enabled: true });
+  const b = fakeApi({ enabled: true });
+  const h = registerOrchestration(a.api, { agentId: "main" });
+  registerOrchestration(b.api, { agentId: "main" });
+  const key = "agent:main:subagent:oca-dedupe";
+  bindShared(h, key, 2);
+  try {
+    const fire = async (id) => {
+      const event = { toolName: "read", runId: "r1", toolCallId: id };
+      return [
+        await a.hooks[0][1](event, { sessionKey: key }),
+        await b.hooks[0][1](event, { sessionKey: key }),
+      ];
+    };
+    assert.deepEqual(await fire("c1"), [{}, {}]);
+    assert.deepEqual(await fire("c2"), [{}, {}]);
+    const [x, y] = await fire("c3");
+    assert.equal(x.block, true);
+    assert.equal(y.block, true);
+    // Already-charged call ids stay allowed for the other hook after exhaustion.
+    assert.deepEqual(await fire("c2"), [{}, {}]);
+  } finally {
+    h.guard.release(key);
+  }
+});
+
+test("without toolCallId every hook invocation is charged (fail closed)", async () => {
+  const a = fakeApi({ enabled: true });
+  const b = fakeApi({ enabled: true });
+  const h = registerOrchestration(a.api, { agentId: "main" });
+  registerOrchestration(b.api, { agentId: "main" });
+  const key = "agent:main:subagent:oca-nocallid";
+  bindShared(h, key, 2);
+  try {
+    const event = { toolName: "read", runId: "r1" };
+    assert.deepEqual(await a.hooks[0][1](event, { sessionKey: key }), {});
+    assert.deepEqual(await b.hooks[0][1](event, { sessionKey: key }), {});
+    assert.equal((await a.hooks[0][1](event, { sessionKey: key })).block, true);
+  } finally {
+    h.guard.release(key);
+  }
+});
+
+test("shared guard slot is validated, non-writable, and survives a cache-busted reload", async () => {
+  const slot = Symbol.for("openclaw-orchestration-adapter.toolGuard");
+  const saved = Object.getOwnPropertyDescriptor(globalThis, slot);
+  try {
+    const url = new URL("../src/plugin.js", import.meta.url);
+    const first = await import(`${url.href}?reload=1`);
+    const second = await import(`${url.href}?reload=2`);
+    assert.equal(first.sharedToolGuard(), second.sharedToolGuard());
+    const desc = Object.getOwnPropertyDescriptor(globalThis, slot);
+    assert.equal(desc.writable, false);
+    assert.equal(desc.enumerable, false);
+    // Tampered slot is replaced by a working guard rather than trusted.
+    Object.defineProperty(globalThis, slot, { value: { check: () => ({}) }, configurable: true });
+    const repaired = first.sharedToolGuard();
+    assert.equal(typeof repaired.checkWhenAdmitted, "function");
+    assert.equal(globalThis[slot], repaired);
+    assert.equal(first.sharedToolGuard(), repaired);
+  } finally {
+    if (saved) Object.defineProperty(globalThis, slot, saved);
+    else delete globalThis[slot];
+  }
+});
