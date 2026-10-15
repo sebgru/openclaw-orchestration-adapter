@@ -103,6 +103,61 @@ test("manifest declares only documented fields and an agentId pattern", () => {
   assert.equal(manifest.configSchema.additionalProperties, false);
   assert.match("main", new RegExp(manifest.configSchema.properties.agentId.pattern));
   assert.doesNotMatch("a:b", new RegExp(manifest.configSchema.properties.agentId.pattern));
+  assert.equal(manifest.configSchema.properties.lifecycleDiagnostics.default, false);
+});
+
+test("opt-in lifecycle diagnostics correlate binding events without raw run/session/task data", async () => {
+  const messages = [];
+  const disabled = fakeApi({
+    enabled: true,
+    agentId: "main",
+    workerRoutes: { standard: ["example/model-fast"] },
+  });
+  disabled.api.logger = { info: (message) => messages.push(message) };
+  plugin.register(disabled.api);
+  await getOrchestration(disabled.api).dispatchTask(task(), {
+    resolveModel: () => "example/model-fast",
+  });
+  assert.equal(messages.length, 0);
+
+  const { api, hooks, calls } = fakeApi({
+    enabled: true,
+    agentId: "main",
+    workerRoutes: { standard: ["example/model-fast"] },
+    lifecycleDiagnostics: true,
+  });
+  api.logger = { info: (message) => messages.push(message) };
+  plugin.register(api);
+  const handle = getOrchestration(api);
+  await handle.dispatchTask(task({ goal: "PRIVATE_TASK_GOAL" }), {
+    resolveModel: () => "example/model-fast",
+  });
+
+  const run = calls.find(([name]) => name === "run")[1];
+  const rawSessionKey = run.sessionKey;
+  const hook = hooks.find(([name]) => name === "before_tool_call")[1];
+  await hook({ toolName: "read", runId: "late-run", toolCallId: "late-call" }, {
+    sessionKey: rawSessionKey,
+  });
+
+  const trace = messages.join("\n");
+  for (const event of [
+    "worker_started",
+    "binding_created",
+    "admission_confirmed",
+    "run_wait_started",
+    "run_wait_finished",
+    "binding_released",
+    "hook_blocked",
+  ]) {
+    assert.match(trace, new RegExp(event));
+  }
+  assert.doesNotMatch(trace, /PRIVATE_TASK_GOAL/);
+  assert.equal(trace.includes(rawSessionKey), false);
+  assert.doesNotMatch(trace, /run-1|late-run/);
+  const records = messages.map((message) => JSON.parse(message.split(" lifecycle ")[1]));
+  const correlationId = records.find((event) => event.event === "binding_created").correlationId;
+  assert.ok(records.filter((event) => event.correlationId === correlationId).length >= 5);
 });
 
 test("packaging metadata ships the manifest and any declared skill directory", () => {

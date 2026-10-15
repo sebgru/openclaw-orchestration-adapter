@@ -31,15 +31,24 @@ function denialLogger(api) {
     : undefined;
 }
 
-export function sharedToolGuard(api) {
+function lifecycleLogger(api, enabled) {
+  if (enabled !== true || typeof api?.logger?.info !== "function") return undefined;
+  return (event) => api.logger.info(`orchestration-adapter: lifecycle ${JSON.stringify(event)}`);
+}
+
+export function sharedToolGuard(api, { lifecycleDiagnostics = false } = {}) {
   const existing = globalThis[SHARED_GUARD];
   if (isGuardLike(existing)) {
     existing.setOnDecision?.(denialLogger(api));
+    existing.setOnLifecycle?.(lifecycleLogger(api, lifecycleDiagnostics));
     return existing;
   }
   // Missing or tampered slot: install a fresh guard (no bindings, so workers
   // fail closed) as a non-writable, non-enumerable property.
-  const guard = new ToolGuard({ onDecision: denialLogger(api) });
+  const guard = new ToolGuard({
+    onDecision: denialLogger(api),
+    onLifecycle: lifecycleLogger(api, lifecycleDiagnostics),
+  });
   Object.defineProperty(globalThis, SHARED_GUARD, {
     value: guard,
     writable: false,
@@ -80,8 +89,9 @@ function isGuardLike(g) {
  */
 export function registerOrchestration(
   api,
-  { guard = sharedToolGuard(api), agentId, workerRoutes, dispatch } = {},
+  { guard: suppliedGuard, agentId, workerRoutes, dispatch, lifecycleDiagnostics = false } = {},
 ) {
+  const guard = suppliedGuard ?? sharedToolGuard(api, { lifecycleDiagnostics });
   const routes = normalizeWorkerRoutes(workerRoutes);
   const dispatchLimits = normalizeDispatchConfig(dispatch);
   api.on(
@@ -157,6 +167,7 @@ export default {
       agentId: api.pluginConfig.agentId,
       workerRoutes: api.pluginConfig.workerRoutes,
       dispatch: api.pluginConfig.dispatch,
+      lifecycleDiagnostics: api.pluginConfig.lifecycleDiagnostics === true,
     });
   },
 };

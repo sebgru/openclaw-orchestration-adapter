@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { newWorkerSessionKey } from "./tool-guard.js";
 import { createWorkerBrief } from "./worker-brief.js";
 
@@ -88,13 +89,23 @@ export function createBoundWorker({ subagent, guard, agentId, buildMessage, chec
     }
 
     const sessionKey = newWorkerSessionKey(agentId);
+    const correlationId = randomUUID();
+    const emit = (event, fields = {}) =>
+      guard.lifecycle?.({ event, correlationId, ...fields });
     guard.bind({
       sessionKey,
       taskId: task.id,
       allowedTools: grant.allowedTools,
       budget: grant.budget,
+      correlationId,
     });
-    const onAbort = () => guard.release(sessionKey);
+    let terminalReason = "failed";
+    emit("worker_started", { session: guard.fingerprint?.(sessionKey) ?? null });
+    const onAbort = () => {
+      terminalReason = "aborted";
+      emit("abort_requested");
+      guard.release(sessionKey, "aborted");
+    };
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
       const accepted = await subagent.run({
@@ -105,23 +116,41 @@ export function createBoundWorker({ subagent, guard, agentId, buildMessage, chec
         ...splitModel(model),
       });
       guard.confirm(sessionKey, accepted);
+      emit("run_wait_started", {
+        session: guard.fingerprint?.(sessionKey) ?? null,
+        run: guard.fingerprint?.(accepted.runId) ?? null,
+      });
       const result = await subagent.waitForRun({
         runId: accepted.runId,
         timeoutMs: grant.budget.timeoutMs,
       });
+      const safeStatus = ["ok", "error", "timeout", "cancelled"].includes(result?.status)
+        ? result.status
+        : "other";
+      emit("run_wait_finished", { status: safeStatus });
       if (result.status !== "ok") {
         throw new Error(`worker run ended with status ${result.status}`);
       }
       const { messages } = await subagent.getSessionMessages({ sessionKey, limit: 20 });
+      terminalReason = "completed";
       return {
         mode: "tools",
         runId: accepted.runId,
         sessionKey,
         text: lastAssistantText(messages),
       };
+    } catch (error) {
+      if (terminalReason !== "aborted") {
+        terminalReason = error?.name === "TimeoutError" ? "timeout" : "failed";
+        emit("worker_ended", {
+          reason: terminalReason,
+          errorClass: typeof error?.name === "string" ? error.name.slice(0, 40) : "Error",
+        });
+      }
+      throw error;
     } finally {
       signal?.removeEventListener("abort", onAbort);
-      guard.release(sessionKey);
+      guard.release(sessionKey, terminalReason);
       try {
         await subagent.deleteSession({ sessionKey });
       } catch {
