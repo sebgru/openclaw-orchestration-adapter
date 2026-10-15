@@ -419,7 +419,10 @@ test("a throwing callback cannot weaken blocking; unsafe tool names and growth a
   assert.equal(guard.denials.length, 100);
   assert.equal(guard.denials[0].toolName, "exec");
   assert.equal(guard.denials.at(-1).toolName, "exec");
-  assert.equal(guard.denials.some((d) => d.toolName === null), false);
+  assert.equal(
+    guard.denials.some((d) => d.toolName === null),
+    false,
+  );
 });
 
 test("plugin default guard warns once per denied tool call with sanitized fields", async () => {
@@ -436,7 +439,12 @@ test("plugin default guard warns once per denied tool call with sanitized fields
   const sessionKey = `${KEY}-logging`;
   handle.guard.bind({ sessionKey, taskId: "log-test", allowedTools: ["read"], budget });
   handle.guard.confirm(sessionKey, { runId: "run-log-test", sessionKey });
-  const event = { toolName: "exec", runId: "run-log-test", toolCallId: "denied-call-1", params: { cmd: "secret" } };
+  const event = {
+    toolName: "exec",
+    runId: "run-log-test",
+    toolCallId: "denied-call-1",
+    params: { cmd: "secret" },
+  };
   const ctx = { sessionKey };
   assert.equal((await hook(event, ctx)).block, true);
   assert.equal((await hook(event, ctx)).block, true);
