@@ -25,12 +25,21 @@ const SHARED_GUARD = Symbol.for("openclaw-orchestration-adapter.toolGuard");
  * checked several times; the hook forwards event.toolCallId so the guard
  * charges each call once (see ToolGuard.check).
  */
-export function sharedToolGuard() {
+function denialLogger(api) {
+  return typeof api?.logger?.warn === "function"
+    ? (denial) => api.logger.warn("orchestration-adapter: tool call denied", denial)
+    : undefined;
+}
+
+export function sharedToolGuard(api) {
   const existing = globalThis[SHARED_GUARD];
-  if (isGuardLike(existing)) return existing;
+  if (isGuardLike(existing)) {
+    existing.setOnDecision?.(denialLogger(api));
+    return existing;
+  }
   // Missing or tampered slot: install a fresh guard (no bindings, so workers
   // fail closed) as a non-writable, non-enumerable property.
-  const guard = new ToolGuard();
+  const guard = new ToolGuard({ onDecision: denialLogger(api) });
   Object.defineProperty(globalThis, SHARED_GUARD, {
     value: guard,
     writable: false,
@@ -71,7 +80,7 @@ function isGuardLike(g) {
  */
 export function registerOrchestration(
   api,
-  { guard = sharedToolGuard(), agentId, workerRoutes, dispatch } = {},
+  { guard = sharedToolGuard(api), agentId, workerRoutes, dispatch } = {},
 ) {
   const routes = normalizeWorkerRoutes(workerRoutes);
   const dispatchLimits = normalizeDispatchConfig(dispatch);
