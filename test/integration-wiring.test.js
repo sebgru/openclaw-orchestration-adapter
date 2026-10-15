@@ -136,9 +136,12 @@ test("opt-in lifecycle diagnostics correlate binding events without raw run/sess
   const run = calls.find(([name]) => name === "run")[1];
   const rawSessionKey = run.sessionKey;
   const hook = hooks.find(([name]) => name === "before_tool_call")[1];
-  await hook({ toolName: "read", runId: "late-run", toolCallId: "late-call" }, {
-    sessionKey: rawSessionKey,
-  });
+  await hook(
+    { toolName: "read", runId: "late-run", toolCallId: "late-call" },
+    {
+      sessionKey: rawSessionKey,
+    },
+  );
 
   const trace = messages.join("\n");
   for (const event of [

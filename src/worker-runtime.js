@@ -90,8 +90,7 @@ export function createBoundWorker({ subagent, guard, agentId, buildMessage, chec
 
     const sessionKey = newWorkerSessionKey(agentId);
     const correlationId = randomUUID();
-    const emit = (event, fields = {}) =>
-      guard.lifecycle?.({ event, correlationId, ...fields });
+    const emit = (event, fields = {}) => guard.lifecycle?.({ event, correlationId, ...fields });
     guard.bind({
       sessionKey,
       taskId: task.id,
