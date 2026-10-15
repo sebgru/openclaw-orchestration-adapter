@@ -35,6 +35,7 @@ export const DENIAL_REASONS = Object.freeze({
 });
 
 const MAX_DENIALS = 100;
+const MAX_LIFECYCLE_EVENTS = 4096;
 const SAFE_TOOL_NAME = /^[A-Za-z0-9_.:-]{1,64}$/;
 
 function blocked(blockReason, reason) {
@@ -56,6 +57,8 @@ export class ToolGuard {
   #now;
   #admissionWaitMs;
   #onDecision;
+  #onLifecycle;
+  #lifecycleEventCount = 0;
   #salt = randomBytes(16);
   #denials = [];
   #reportedCallIds = new Set();
@@ -65,15 +68,36 @@ export class ToolGuard {
    * the binding awaits confirm(); it must stay below the host's 15s
    * before_tool_call handler timeout (which also fails closed).
    */
-  constructor({ now = Date.now, admissionWaitMs = 5000, onDecision } = {}) {
+  constructor({ now = Date.now, admissionWaitMs = 5000, onDecision, onLifecycle } = {}) {
     this.#now = now;
     this.#admissionWaitMs = admissionWaitMs;
     this.#onDecision = typeof onDecision === "function" ? onDecision : undefined;
+    this.#onLifecycle = typeof onLifecycle === "function" ? onLifecycle : undefined;
   }
 
   /** Attach the default audit sink once when a shared guard is first registered. */
   setOnDecision(onDecision) {
     if (!this.#onDecision && typeof onDecision === "function") this.#onDecision = onDecision;
+  }
+
+  setOnLifecycle(onLifecycle) {
+    this.#onLifecycle = typeof onLifecycle === "function" ? onLifecycle : undefined;
+  }
+
+  /** Fingerprint identifiers with a per-process random salt; raw values are never returned. */
+  fingerprint(value) {
+    return this.#hash(value);
+  }
+
+  /** Emit only sanitized lifecycle metadata; diagnostics can never affect enforcement. */
+  lifecycle(event) {
+    if (!this.#onLifecycle || this.#lifecycleEventCount >= MAX_LIFECYCLE_EVENTS) return;
+    this.#lifecycleEventCount += 1;
+    try {
+      this.#onLifecycle?.({ ...event });
+    } catch {
+      // Diagnostics are fail-neutral and must never change authorization decisions.
+    }
   }
 
   /** Bounded, sanitized denial history; raw identifiers and payloads are never retained. */
@@ -93,6 +117,7 @@ export class ToolGuard {
         toolName: typeof toolName === "string" && SAFE_TOOL_NAME.test(toolName) ? toolName : null,
         session: this.#hash(sessionKey),
         run: this.#hash(runId),
+        correlationId: this.#bindings.get(sessionKey)?.correlationId ?? null,
       };
       this.#denials.push(record);
       if (this.#denials.length > MAX_DENIALS) this.#denials.shift();
@@ -104,7 +129,15 @@ export class ToolGuard {
           this.#reportedCallIds.delete(this.#reportedCallIds.values().next().value);
         }
       }
-      if (isNewCall) this.#onDecision?.({ ...record });
+      if (isNewCall) {
+        const denial = { ...record };
+        delete denial.correlationId;
+        this.#onDecision?.(denial);
+      }
+      // Lifecycle logs require the host call ID so repeated callbacks cannot
+      // create an unbounded log stream. The existing bounded denial view still
+      // records sanitized denials without a call ID.
+      if (callHash !== null && isNewCall) this.lifecycle({ event: "hook_blocked", ...record });
     } catch {
       // Audit failures must never change the blocking decision.
     }
@@ -120,7 +153,7 @@ export class ToolGuard {
   }
 
   /** Register a pending binding before run() is called. runId is unknown until confirm(). */
-  bind({ sessionKey, taskId, allowedTools, budget }) {
+  bind({ sessionKey, taskId, allowedTools, budget, correlationId = randomUUID() }) {
     if (!this.isWorkerSession(sessionKey))
       throw new TypeError("sessionKey outside worker namespace");
     if (this.#bindings.has(sessionKey)) throw new Error("sessionKey already bound");
@@ -144,6 +177,12 @@ export class ToolGuard {
       calls: 0,
       charged: new Map(),
       runId: null,
+      correlationId,
+    });
+    this.lifecycle({
+      event: "binding_created",
+      correlationId,
+      session: this.#hash(sessionKey),
     });
   }
 
@@ -155,15 +194,39 @@ export class ToolGuard {
     const binding = this.#bindings.get(sessionKey);
     if (!binding) throw new Error("no pending binding");
     if (typeof runId !== "string" || !runId || acceptedKey !== sessionKey) {
+      this.lifecycle({
+        event: "admission_rejected",
+        correlationId: binding.correlationId,
+        session: this.#hash(sessionKey),
+        run: this.#hash(runId),
+        acceptedSessionMatches: acceptedKey === sessionKey,
+      });
       this.#bindings.delete(sessionKey);
       throw new Error("run admission did not confirm the bound sessionKey/runId");
     }
     binding.runId = runId;
+    this.lifecycle({
+      event: "admission_confirmed",
+      correlationId: binding.correlationId,
+      session: this.#hash(sessionKey),
+      run: this.#hash(runId),
+      acceptedSessionMatches: true,
+    });
     this.#wake(sessionKey);
   }
 
-  release(sessionKey) {
+  release(sessionKey, reason = "completed") {
+    const binding = this.#bindings.get(sessionKey);
     const had = this.#bindings.delete(sessionKey);
+    if (had) {
+      this.lifecycle({
+        event: "binding_released",
+        correlationId: binding.correlationId,
+        session: this.#hash(sessionKey),
+        run: this.#hash(binding.runId),
+        reason,
+      });
+    }
     this.#wake(sessionKey);
     return had;
   }

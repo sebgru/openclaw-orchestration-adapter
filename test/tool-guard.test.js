@@ -469,3 +469,114 @@ test("plugin default guard warns once per denied tool call with sanitized fields
   assert.equal(JSON.stringify(warns).includes("secret"), false);
   assert.equal(JSON.stringify(warns).includes(sessionKey), false);
 });
+
+test("lifecycle diagnostics are bounded, fail-neutral, and ignore non-function sinks", () => {
+  const events = [];
+  const guard = new ToolGuard({ onLifecycle: (event) => events.push(event) });
+  guard.lifecycle({ event: "one" });
+  assert.deepEqual(events, [{ event: "one" }]);
+  // A throwing diagnostics sink can never change enforcement.
+  const throwing = new ToolGuard({
+    onLifecycle: () => {
+      throw new Error("sink down");
+    },
+  });
+  throwing.lifecycle({ event: "swallowed" });
+  // Non-function sinks (constructor and setter) are ignored, not invoked.
+  const quiet = new ToolGuard({ onLifecycle: "not a function" });
+  quiet.lifecycle({ event: "ignored" });
+  quiet.setOnLifecycle("still not a function");
+  quiet.lifecycle({ event: "ignored" });
+  assert.deepEqual(events, [{ event: "one" }]);
+  // The stream is capped per guard so a hot session cannot log unbounded.
+  const capped = new ToolGuard({ onLifecycle: (event) => events.push(event) });
+  for (let i = 0; i < 4100; i += 1) capped.lifecycle({ event: "e", i });
+  assert.equal(events.length, 1 + 4096);
+  assert.equal(events.at(-1).event, "e");
+});
+
+test("worker lifecycle events tolerate guards without fingerprinting or lifecycle", async () => {
+  const events = [];
+  const guard = {
+    bind: () => {},
+    confirm: () => {},
+    release: () => {},
+    lifecycle: (event) => events.push(event),
+  };
+  const worker = createBoundWorker({ subagent: fakeSubagent(), guard, agentId: "main" });
+  const out = await worker({
+    task: task(),
+    grant: { mode: "tools", allowedTools: ["read"], budget },
+    model: "example/model-fast",
+  });
+  assert.equal(out.text, "answer");
+  assert.deepEqual(
+    events.map((e) => e.event),
+    ["worker_started", "run_wait_started", "run_wait_finished"],
+  );
+  assert.equal(events[0].session, null);
+  assert.equal(events[1].session, null);
+  assert.equal(events[1].run, null);
+  assert.equal(events[2].status, "ok");
+  // A guard exposing only bind/confirm/release is still a valid no-op target.
+  const bare = { bind: () => {}, confirm: () => {}, release: () => {} };
+  const plain = createBoundWorker({ subagent: fakeSubagent(), guard: bare, agentId: "main" });
+  const done = await plain({
+    task: task(),
+    grant: { mode: "tools", allowedTools: [], budget },
+    model: "example/model-fast",
+  });
+  assert.equal(done.mode, "tools");
+});
+
+test("worker lifecycle reports unknown statuses and sanitized error classes", async () => {
+  const events = [];
+  const guard = {
+    bind: () => {},
+    confirm: () => {},
+    release: () => {},
+    lifecycle: (event) => events.push(event),
+  };
+  const run = (subagent) =>
+    createBoundWorker({ subagent, guard, agentId: "main" })({
+      task: task(),
+      grant: { mode: "tools", allowedTools: [], budget },
+      model: "example/model-fast",
+    });
+
+  await assert.rejects(
+    run(fakeSubagent({ waitForRun: async () => ({ status: "weird" }) })),
+    /status weird/,
+  );
+  assert.equal(events.find((e) => e.event === "run_wait_finished").status, "other");
+
+  const timeout = new Error("slow");
+  timeout.name = "TimeoutError";
+  await assert.rejects(
+    run(
+      fakeSubagent({
+        waitForRun: async () => {
+          throw timeout;
+        },
+      }),
+    ),
+  );
+  const timedOut = events.filter((e) => e.event === "worker_ended").at(-1);
+  assert.equal(timedOut.reason, "timeout");
+  assert.equal(timedOut.errorClass, "TimeoutError");
+  assert.equal(JSON.stringify(timedOut).includes("slow"), false);
+
+  const notAnError = { name: 42 };
+  await assert.rejects(
+    run(
+      fakeSubagent({
+        waitForRun: async () => {
+          throw notAnError;
+        },
+      }),
+    ),
+  );
+  const failed = events.filter((e) => e.event === "worker_ended").at(-1);
+  assert.equal(failed.reason, "failed");
+  assert.equal(failed.errorClass, "Error");
+});

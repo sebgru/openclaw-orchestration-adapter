@@ -21,6 +21,18 @@ consumer for memory-adapter receipt schema v2 fails closed on missing/unknown
 receipts and labels all forwarded retrieval as untrusted evidence. Plan state is
 transient and has no file, database, session, cron, or Gateway integration.
 
+### Opt-in lifecycle diagnostics
+
+`lifecycleDiagnostics` is an operator-owned plugin setting and defaults to
+`false`. When enabled, the adapter emits at most 4,096 worker lifecycle events
+per process through
+the host plugin logger. Events use a per-dispatch correlation ID and
+per-process-salted fingerprints for session/run identifiers; they exclude task
+content, prompt text, tool arguments/results, and raw identifiers. Diagnostic
+logging is fail-neutral and never changes guard decisions. This telemetry helps
+correlate binding/admission/release with blocked hook calls, but does not create
+host identities or substitute for a host-supported integration fixture.
+
 ### Token-budget hint
 
 `budget.maxTokens` is optional and defaults to 150,000 tokens per worker attempt;
