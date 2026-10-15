@@ -147,7 +147,9 @@ export function createBoundWorker({ subagent, guard, agentId, buildMessage, chec
         });
       }
       throw error;
-    } finally {
+      // c8 reports a phantom uncovered branch on the `finally` keyword when a
+      // `return` lives in the `try`; the finally body is fully exercised.
+    } /* c8 ignore next */ finally {
       signal?.removeEventListener("abort", onAbort);
       guard.release(sessionKey, terminalReason);
       try {
