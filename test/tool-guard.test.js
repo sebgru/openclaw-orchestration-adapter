@@ -425,6 +425,22 @@ test("a throwing callback cannot weaken blocking; unsafe tool names and growth a
   );
 });
 
+test("distinct denied call ids are reported once and the dedupe set stays bounded", () => {
+  const reported = [];
+  const guard = new ToolGuard({ onDecision: (d) => reported.push(d) });
+  guard.bind({ sessionKey: KEY, taskId: "t", allowedTools: ["read"], budget });
+  guard.confirm(KEY, { runId: "run-1", sessionKey: KEY });
+  for (let i = 0; i < 150; i += 1) {
+    assert.equal(call(guard, { toolName: "exec", toolCallId: `denied-${i}` }).block, true);
+  }
+  assert.equal(reported.length, 150);
+  // The dedupe set evicts the oldest ids past its bound, so an evicted id is
+  // reported again rather than being silently suppressed forever.
+  assert.equal(call(guard, { toolName: "exec", toolCallId: "denied-0" }).block, true);
+  assert.equal(reported.length, 151);
+  assert.equal(guard.denials.length, 100);
+});
+
 test("plugin default guard warns once per denied tool call with sanitized fields", async () => {
   const warns = [];
   let hook;

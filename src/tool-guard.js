@@ -209,7 +209,9 @@ export class ToolGuard {
    */
   check(input) {
     const result = this.#decide(input ?? {});
-    if (result.block) this.#record(result.reason, input ?? {});
+    // A blocking result implies input was a non-nullish record, so #record can
+    // read it directly; the previous `?? {}` fallback was unreachable.
+    if (result.block) this.#record(result.reason, input);
     return result;
   }
 
