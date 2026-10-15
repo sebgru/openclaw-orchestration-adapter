@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DELEGATION_TOOLS,
+  DENIAL_REASONS,
   ToolGuard,
   createBoundWorker,
   dispatchTask,
@@ -349,4 +350,98 @@ test("toolCallId dedupes repeated hook checks and blocks reuse for another tool"
   );
   // A fresh call id with the budget already spent still blocks.
   assert.match(call(guard, { toolCallId: "c2" }).blockReason, /call budget/);
+});
+
+test("each block reason is recorded distinctly with hashed identifiers only", () => {
+  const events = [];
+  const clock = { t: 0 };
+  const guard = new ToolGuard({ now: () => clock.t, onDecision: (d) => events.push(d) });
+  guard.bind({ sessionKey: KEY, taskId: "t", allowedTools: ["read"], budget });
+  assert.equal(call(guard).block, true); // unconfirmed
+  guard.confirm(KEY, { runId: "run-1", sessionKey: KEY });
+  guard.check({ sessionKey: "agent:main:subagent:oca-other", runId: "run-1", toolName: "read" });
+  call(guard, { runId: "run-SECRET" });
+  call(guard, { toolName: "exec" });
+  call(guard, { toolName: "sessions_spawn" });
+  assert.deepEqual(call(guard), {});
+  assert.deepEqual(call(guard), {});
+  call(guard); // call budget
+  clock.t = 5000;
+  call(guard); // time budget
+  assert.deepEqual(
+    events.map((e) => e.reason),
+    [
+      DENIAL_REASONS.UNCONFIRMED,
+      DENIAL_REASONS.WRONG_SESSION,
+      DENIAL_REASONS.RUN_MISMATCH,
+      DENIAL_REASONS.NOT_GRANTED,
+      DENIAL_REASONS.DELEGATION,
+      DENIAL_REASONS.CALL_BUDGET,
+      DENIAL_REASONS.TIME_BUDGET,
+    ],
+  );
+  assert.equal(new Set(Object.values(DENIAL_REASONS)).size, Object.keys(DENIAL_REASONS).length);
+  const dump = JSON.stringify(events);
+  for (const raw of [KEY, "oca-1111", "oca-other", "run-1", "run-SECRET"]) {
+    assert.equal(dump.includes(raw), false, `leaked ${raw}`);
+  }
+  assert.match(events[0].session, /^[0-9a-f]{12}$/);
+  assert.equal(events[0].session, events[2].session);
+  assert.notEqual(events[0].session, events[1].session);
+  assert.deepEqual(Object.keys(events[0]).sort(), ["reason", "run", "session", "toolName"]);
+  assert.equal(guard.denials.length, events.length);
+});
+
+test("allowed and foreign-session calls are never logged", () => {
+  const events = [];
+  const guard = new ToolGuard({ onDecision: (d) => events.push(d) });
+  guard.bind({ sessionKey: KEY, taskId: "t", allowedTools: ["read"], budget });
+  guard.confirm(KEY, { runId: "run-1", sessionKey: KEY });
+  assert.deepEqual(call(guard), {});
+  assert.deepEqual(guard.check({ sessionKey: "agent:main:main", toolName: "exec" }), {});
+  assert.deepEqual(guard.check(), {});
+  assert.deepEqual(events, []);
+  assert.deepEqual(guard.denials, []);
+});
+
+test("a throwing callback cannot weaken blocking; unsafe tool names and growth are bounded", () => {
+  const guard = new ToolGuard({
+    onDecision: () => {
+      throw new Error("sink down");
+    },
+  });
+  guard.bind({ sessionKey: KEY, taskId: "t", allowedTools: ["read"], budget });
+  guard.confirm(KEY, { runId: "run-1", sessionKey: KEY });
+  const r = call(guard, { toolName: "rm -rf /secret path" });
+  assert.equal(r.block, true);
+  assert.equal(Object.keys(r).includes("reason"), false);
+  for (let i = 0; i < 150; i += 1) call(guard, { toolName: "exec" });
+  assert.equal(guard.denials.length, 100);
+  assert.equal(guard.denials[0].toolName, "exec");
+  assert.equal(guard.denials.at(-1).toolName, "exec");
+  assert.equal(guard.denials.some((d) => d.toolName === null), false);
+});
+
+test("plugin default guard warns once per denied tool call with sanitized fields", async () => {
+  const warns = [];
+  let hook;
+  const api = {
+    logger: { warn: (...a) => warns.push(a) },
+    on: (_name, fn) => {
+      hook = fn;
+    },
+    runtime: { subagent: {} },
+  };
+  const handle = registerOrchestration(api, {});
+  const sessionKey = `${KEY}-logging`;
+  handle.guard.bind({ sessionKey, taskId: "log-test", allowedTools: ["read"], budget });
+  handle.guard.confirm(sessionKey, { runId: "run-log-test", sessionKey });
+  const event = { toolName: "exec", runId: "run-log-test", toolCallId: "denied-call-1", params: { cmd: "secret" } };
+  const ctx = { sessionKey };
+  assert.equal((await hook(event, ctx)).block, true);
+  assert.equal((await hook(event, ctx)).block, true);
+  assert.equal(warns.length, 1);
+  assert.equal(warns[0][1].reason, DENIAL_REASONS.NOT_GRANTED);
+  assert.equal(JSON.stringify(warns).includes("secret"), false);
+  assert.equal(JSON.stringify(warns).includes(sessionKey), false);
 });

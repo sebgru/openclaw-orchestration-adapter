@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 /** Marker embedded in every session key this plugin creates for a worker run. */
 export const WORKER_SESSION_MARKER = ":subagent:oca-";
@@ -22,8 +22,25 @@ export function newWorkerSessionKey(agentId) {
   return `agent:${agentId}:subagent:oca-${randomUUID()}`;
 }
 
-function blocked(blockReason) {
-  return { block: true, blockReason: `orchestration-adapter: ${blockReason}` };
+/** Stable, non-sensitive denial categories for guard audit evidence. */
+export const DENIAL_REASONS = Object.freeze({
+  WRONG_SESSION: "wrong_session",
+  UNCONFIRMED: "unconfirmed_binding",
+  RUN_MISMATCH: "wrong_run",
+  TIME_BUDGET: "time_budget_exhausted",
+  DELEGATION: "delegation_forbidden",
+  NOT_GRANTED: "out_of_grant",
+  CALL_BUDGET: "call_budget_exhausted",
+  CALL_ID_REUSE: "call_id_reused",
+});
+
+const MAX_DENIALS = 100;
+const SAFE_TOOL_NAME = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+function blocked(blockReason, reason) {
+  const result = { block: true, blockReason: `orchestration-adapter: ${blockReason}` };
+  if (reason) Object.defineProperty(result, "reason", { value: reason, enumerable: false });
+  return result;
 }
 
 /**
@@ -38,15 +55,59 @@ export class ToolGuard {
   #waiters = new Map();
   #now;
   #admissionWaitMs;
+  #onDecision;
+  #salt = randomBytes(16);
+  #denials = [];
+  #reportedCallIds = new Set();
 
   /**
    * admissionWaitMs bounds how long checkWhenAdmitted() holds a tool call while
    * the binding awaits confirm(); it must stay below the host's 15s
    * before_tool_call handler timeout (which also fails closed).
    */
-  constructor({ now = Date.now, admissionWaitMs = 5000 } = {}) {
+  constructor({ now = Date.now, admissionWaitMs = 5000, onDecision } = {}) {
     this.#now = now;
     this.#admissionWaitMs = admissionWaitMs;
+    this.#onDecision = typeof onDecision === "function" ? onDecision : undefined;
+  }
+
+  /** Attach the default audit sink once when a shared guard is first registered. */
+  setOnDecision(onDecision) {
+    if (!this.#onDecision && typeof onDecision === "function") this.#onDecision = onDecision;
+  }
+
+  /** Bounded, sanitized denial history; raw identifiers and payloads are never retained. */
+  get denials() {
+    return this.#denials.map((denial) => ({ ...denial }));
+  }
+
+  #hash(value) {
+    if (typeof value !== "string" || !value) return null;
+    return createHash("sha256").update(this.#salt).update(value).digest("hex").slice(0, 12);
+  }
+
+  #record(reason, { sessionKey, runId, toolName, toolCallId }) {
+    try {
+      const record = {
+        reason,
+        toolName: typeof toolName === "string" && SAFE_TOOL_NAME.test(toolName) ? toolName : null,
+        session: this.#hash(sessionKey),
+        run: this.#hash(runId),
+      };
+      this.#denials.push(record);
+      if (this.#denials.length > MAX_DENIALS) this.#denials.shift();
+      const callHash = this.#hash(toolCallId);
+      const isNewCall = callHash === null || !this.#reportedCallIds.has(callHash);
+      if (callHash !== null && isNewCall) {
+        this.#reportedCallIds.add(callHash);
+        if (this.#reportedCallIds.size > MAX_DENIALS) {
+          this.#reportedCallIds.delete(this.#reportedCallIds.values().next().value);
+        }
+      }
+      if (isNewCall) this.#onDecision?.({ ...record });
+    } catch {
+      // Audit failures must never change the blocking decision.
+    }
   }
 
   /** True when the session key belongs to the worker namespace. */
@@ -146,24 +207,35 @@ export class ToolGuard {
    * once. Without an id calls cannot be told apart and each check is charged
    * (fail closed: over-counting never grants extra budget).
    */
-  check({ sessionKey, runId, toolName, toolCallId }) {
+  check(input) {
+    const result = this.#decide(input ?? {});
+    if (result.block) this.#record(result.reason, input ?? {});
+    return result;
+  }
+
+  #decide({ sessionKey, runId, toolName, toolCallId }) {
     if (!this.isWorkerSession(sessionKey)) return {};
     const binding = this.#bindings.get(sessionKey);
-    if (!binding) return blocked("worker call has no active binding");
-    if (binding.runId === null) return blocked("worker binding is not yet confirmed");
-    if (runId !== binding.runId) return blocked("runId does not match the bound run");
-    if (this.#now() >= binding.deadline) return blocked("task time budget exhausted");
+    if (!binding) return blocked("worker call has no active binding", DENIAL_REASONS.WRONG_SESSION);
+    if (binding.runId === null)
+      return blocked("worker binding is not yet confirmed", DENIAL_REASONS.UNCONFIRMED);
+    if (runId !== binding.runId)
+      return blocked("runId does not match the bound run", DENIAL_REASONS.RUN_MISMATCH);
+    if (this.#now() >= binding.deadline)
+      return blocked("task time budget exhausted", DENIAL_REASONS.TIME_BUDGET);
     if (typeof toolName !== "string" || DELEGATION_SET.has(toolName)) {
-      return blocked("delegation is not permitted");
+      return blocked("delegation is not permitted", DENIAL_REASONS.DELEGATION);
     }
-    if (!binding.allowed.has(toolName)) return blocked(`tool ${toolName} is not granted`);
+    if (!binding.allowed.has(toolName))
+      return blocked(`tool ${toolName} is not granted`, DENIAL_REASONS.NOT_GRANTED);
     const id = typeof toolCallId === "string" && toolCallId ? toolCallId : null;
     if (id !== null && binding.charged.has(id)) {
       if (binding.charged.get(id) !== toolName)
-        return blocked("toolCallId reused for another tool");
+        return blocked("toolCallId reused for another tool", DENIAL_REASONS.CALL_ID_REUSE);
       return {};
     }
-    if (binding.calls >= binding.maxCalls) return blocked("tool call budget exhausted");
+    if (binding.calls >= binding.maxCalls)
+      return blocked("tool call budget exhausted", DENIAL_REASONS.CALL_BUDGET);
     binding.calls += 1;
     if (id !== null) binding.charged.set(id, toolName);
     return {};
