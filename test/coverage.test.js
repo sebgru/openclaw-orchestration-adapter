@@ -86,6 +86,9 @@ test("validateTask reports every contract violation and isTaskState guards state
     [(t) => (t.outputSchema = []), /outputSchema/],
     [(t) => (t.dependencies = "first"), /dependencies/],
     [(t) => (t.dependencies = [1]), /dependencies/],
+    [(t) => (t.allowedCalls = [{ toolName: "read", params: null }]), /allowedCalls/],
+    [(t) => (t.allowedCalls = [{ toolName: "other", params: {} }]), /allowedCalls/],
+    [(t) => (t.allowedCalls = []), /constrain every allowed tool/],
   ];
 
   for (const [mutate, pattern] of mutations) {
@@ -664,6 +667,22 @@ test("createWorkerBrief enforces structural limits and preserves dependencies", 
 
   const brief = createWorkerBrief(task("with-dep", ["dep"]));
   assert.deepEqual(brief.task.dependencies, ["dep"]);
+
+  const constrained = task("with-exact-call");
+  constrained.allowedTools = ["mcp__openclaw__gateway_exec"];
+  constrained.allowedCalls = [
+    {
+      toolName: "mcp__openclaw__gateway_exec",
+      params: { command: "git status --short", title: "Read-only status check" },
+    },
+  ];
+  const constrainedBrief = createWorkerBrief(constrained);
+  assert.deepEqual(constrainedBrief.authority.allowedCalls, constrained.allowedCalls);
+  const manyCalls = {
+    ...constrained,
+    allowedCalls: Array.from({ length: 33 }, () => constrained.allowedCalls[0]),
+  };
+  assert.throws(() => createWorkerBrief(manyCalls), /structural limits/);
 });
 
 test("cancelPlan leaves terminal tasks untouched", () => {

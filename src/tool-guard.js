@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 /** Marker embedded in every session key this plugin creates for a worker run. */
@@ -32,6 +33,7 @@ export const DENIAL_REASONS = Object.freeze({
   NOT_GRANTED: "out_of_grant",
   CALL_BUDGET: "call_budget_exhausted",
   CALL_ID_REUSE: "call_id_reused",
+  ARGUMENTS_NOT_ALLOWLISTED: "arguments_not_allowlisted",
 });
 
 const MAX_DENIALS = 100;
@@ -153,7 +155,7 @@ export class ToolGuard {
   }
 
   /** Register a pending binding before run() is called. runId is unknown until confirm(). */
-  bind({ sessionKey, taskId, allowedTools, budget, correlationId = randomUUID() }) {
+  bind({ sessionKey, taskId, allowedTools, allowedCalls, budget, correlationId = randomUUID() }) {
     if (!this.isWorkerSession(sessionKey))
       throw new TypeError("sessionKey outside worker namespace");
     if (this.#bindings.has(sessionKey)) throw new Error("sessionKey already bound");
@@ -163,6 +165,28 @@ export class ToolGuard {
     }
     const delegating = allowedTools.filter((t) => DELEGATION_SET.has(t));
     if (delegating.length) throw new Error(`delegation tools cannot be granted: ${delegating}`);
+    if (
+      allowedCalls !== undefined &&
+      (!Array.isArray(allowedCalls) ||
+        !allowedCalls.every(
+          (call) =>
+            call &&
+            typeof call.toolName === "string" &&
+            allowedTools.includes(call.toolName) &&
+            call.params !== null &&
+            typeof call.params === "object" &&
+            !Array.isArray(call.params),
+        ))
+    ) {
+      throw new TypeError("allowedCalls must contain exact params for granted tools");
+    }
+    if (allowedCalls !== undefined) {
+      const constrained = new Set(allowedCalls.map((call) => call.toolName));
+      const unconstrained = allowedTools.filter((toolName) => !constrained.has(toolName));
+      if (unconstrained.length) {
+        throw new TypeError(`allowedCalls must constrain every granted tool: ${unconstrained}`);
+      }
+    }
     if (!Number.isInteger(budget?.maxCalls) || budget.maxCalls < 1) {
       throw new RangeError("budget.maxCalls must be a positive integer");
     }
@@ -172,6 +196,13 @@ export class ToolGuard {
     this.#bindings.set(sessionKey, {
       taskId,
       allowed: new Set(allowedTools),
+      allowedCalls:
+        allowedCalls === undefined
+          ? undefined
+          : allowedCalls.map((call) => ({
+              toolName: call.toolName,
+              params: structuredClone(call.params),
+            })),
       maxCalls: budget.maxCalls,
       deadline: this.#now() + budget.timeoutMs,
       calls: 0,
@@ -278,7 +309,7 @@ export class ToolGuard {
     return result;
   }
 
-  #decide({ sessionKey, runId, toolName, toolCallId }) {
+  #decide({ sessionKey, runId, toolName, toolCallId, params }) {
     if (!this.isWorkerSession(sessionKey)) return {};
     const binding = this.#bindings.get(sessionKey);
     if (!binding) return blocked("worker call has no active binding", DENIAL_REASONS.WRONG_SESSION);
@@ -295,14 +326,34 @@ export class ToolGuard {
       return blocked(`tool ${toolName} is not granted`, DENIAL_REASONS.NOT_GRANTED);
     const id = typeof toolCallId === "string" && toolCallId ? toolCallId : null;
     if (id !== null && binding.charged.has(id)) {
-      if (binding.charged.get(id) !== toolName)
+      const previous = binding.charged.get(id);
+      if (
+        previous.toolName !== toolName ||
+        (binding.allowedCalls !== undefined && !isDeepStrictEqual(previous.params, params))
+      )
         return blocked("toolCallId reused for another tool", DENIAL_REASONS.CALL_ID_REUSE);
       return {};
+    }
+    if (
+      binding.allowedCalls !== undefined &&
+      !binding.allowedCalls.some(
+        (call) => call.toolName === toolName && isDeepStrictEqual(call.params, params),
+      )
+    ) {
+      return blocked(
+        `tool ${toolName} arguments are not allowlisted`,
+        DENIAL_REASONS.ARGUMENTS_NOT_ALLOWLISTED,
+      );
     }
     if (binding.calls >= binding.maxCalls)
       return blocked("tool call budget exhausted", DENIAL_REASONS.CALL_BUDGET);
     binding.calls += 1;
-    if (id !== null) binding.charged.set(id, toolName);
+    if (id !== null) {
+      binding.charged.set(id, {
+        toolName,
+        params: binding.allowedCalls === undefined ? undefined : structuredClone(params),
+      });
+    }
     return {};
   }
 }

@@ -70,7 +70,16 @@ Plugin config (`plugins.entries.openclaw-orchestration-adapter.config`); without
 {
   "enabled": true,
   "dispatch": {
-    "allowedTools": ["read"],
+    "allowedTools": ["mcp__openclaw__gateway_exec"],
+    "allowedCalls": [
+      {
+        "toolName": "mcp__openclaw__gateway_exec",
+        "params": {
+          "command": "git -C /workspace/project status --short",
+          "title": "Read-only status check"
+        }
+      }
+    ],
     "maxCalls": 10,
     "maxTimeoutMs": 120000,
     "maxTokens": 100000
@@ -79,6 +88,7 @@ Plugin config (`plugins.entries.openclaw-orchestration-adapter.config`); without
 ```
 
 - `dispatch` is an operator-owned ceiling; the calling agent can only narrow it. Delegation tools are never grantable, completion mode (default) grants no tools, and budgets above the ceiling are rejected.
+- For a strict command/tool-argument allowlist, configure `dispatch.allowedCalls`. Every `allowedTools` entry must then have at least one entry; the worker receives those operator-owned exact parameters, and its complete argument object must match one configured `params` object. Extra fields, changed commands, or missing arguments are blocked by the adapter's `before_tool_call` hook before the host tool runs. This can constrain `gateway_exec` to fixed command and option values. Do not put credentials or secrets in allowlisted parameters. Omitting `allowedCalls` preserves the prior name-only grant behavior.
 - Task scope (`agentId`, `deliveryContext.channel`, `sessionKey`) is taken from host tool context, not model input; unknown parameters are rejected. The model cannot choose a model, retries, or dependencies; the tier's `workerRoutes` pool still decides the model and an unconfigured tier fails closed.
 - A single dispatch has no independent verifier, so results are returned with `verified: false` and must be checked by the caller.
 

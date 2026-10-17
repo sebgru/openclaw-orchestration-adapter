@@ -95,6 +95,7 @@ export function createBoundWorker({ subagent, guard, agentId, buildMessage, chec
       sessionKey,
       taskId: task.id,
       allowedTools: grant.allowedTools,
+      ...(grant.allowedCalls === undefined ? {} : { allowedCalls: grant.allowedCalls }),
       budget: grant.budget,
       correlationId,
     });

@@ -15,7 +15,8 @@ export function createWorkerBrief(task, { memoryReceipt, memoryContent, maxChars
   if (
     task.goal.length > MAX_GOAL_CHARS ||
     task.successCriteria.length > MAX_CRITERIA ||
-    task.allowedTools.length > MAX_GRANTS
+    task.allowedTools.length > MAX_GRANTS ||
+    task.allowedCalls?.length > MAX_GRANTS
   ) {
     throw new RangeError("Task brief exceeds structural limits");
   }
@@ -33,6 +34,9 @@ export function createWorkerBrief(task, { memoryReceipt, memoryContent, maxChars
     }),
     authority: Object.freeze({
       allowedTools: Object.freeze([...task.allowedTools]),
+      ...(task.allowedCalls === undefined
+        ? {}
+        : { allowedCalls: structuredClone(task.allowedCalls) }),
       prohibitedActions: Object.freeze([...task.prohibitedActions]),
       mayDelegate: false,
       maxCalls: task.budget.maxCalls,

@@ -48,6 +48,26 @@ export function validateTask(task) {
   if (!Array.isArray(task.allowedTools) || !task.allowedTools.every(nonEmptyString)) {
     errors.push("allowedTools must be an array of non-empty strings");
   }
+  if (task.allowedCalls !== undefined) {
+    const validAllowedCalls =
+      Array.isArray(task.allowedCalls) &&
+      task.allowedCalls.every(
+        (call) =>
+          isRecord(call) &&
+          nonEmptyString(call.toolName) &&
+          isRecord(call.params) &&
+          Array.isArray(task.allowedTools) &&
+          task.allowedTools.includes(call.toolName),
+      );
+    if (!validAllowedCalls) {
+      errors.push("allowedCalls must contain toolName/params entries for allowedTools");
+    } else {
+      const constrained = new Set(task.allowedCalls.map((call) => call.toolName));
+      if (task.allowedTools.some((toolName) => !constrained.has(toolName))) {
+        errors.push("allowedCalls must constrain every allowed tool");
+      }
+    }
+  }
   if (!Array.isArray(task.prohibitedActions) || !task.prohibitedActions.every(nonEmptyString)) {
     errors.push("prohibitedActions must be an array of non-empty strings");
   }
