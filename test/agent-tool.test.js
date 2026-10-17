@@ -253,6 +253,41 @@ test("normalizeDispatchConfig validates the block", () => {
   assert.throws(() => normalizeDispatchConfig({ allowedTools: [1] }), /strings/);
   assert.throws(() => normalizeDispatchConfig({ allowedTools: ["subagents"] }), /cannot grant/);
   assert.throws(() => normalizeDispatchConfig({ maxCalls: 0 }), /positive/);
+  assert.throws(() => normalizeDispatchConfig({ allowedCalls: "read" }), /must be an array/);
+  assert.throws(
+    () =>
+      normalizeDispatchConfig({
+        allowedTools: ["read"],
+        allowedCalls: Array.from({ length: 33 }, () => ({ toolName: "read", params: {} })),
+      }),
+    /at most 32 entries/,
+  );
+  assert.throws(
+    () =>
+      normalizeDispatchConfig({
+        allowedTools: ["read"],
+        allowedCalls: [{ toolName: "read" }],
+      }),
+    /must contain toolName and params/,
+  );
+  const circular = { command: "git status" };
+  circular.self = circular;
+  assert.throws(
+    () =>
+      normalizeDispatchConfig({
+        allowedTools: ["read"],
+        allowedCalls: [{ toolName: "read", params: circular }],
+      }),
+    /must be JSON-safe/,
+  );
+  assert.throws(
+    () =>
+      normalizeDispatchConfig({
+        allowedTools: ["read"],
+        allowedCalls: [{ toolName: "read", params: { toJSON: () => 42 } }],
+      }),
+    /must be a JSON object/,
+  );
   assert.throws(
     () =>
       normalizeDispatchConfig({

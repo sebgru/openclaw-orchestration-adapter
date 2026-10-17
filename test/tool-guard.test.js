@@ -94,8 +94,7 @@ test("deployment-owned exact argument allowlist blocks shell command changes", (
     { command: "git -C /workspace/project status --short && id" },
   ]) {
     assert.match(
-      guard.check({ sessionKey: KEY, runId: "run-1", toolName, params })
-        .blockReason,
+      guard.check({ sessionKey: KEY, runId: "run-1", toolName, params }).blockReason,
       /arguments are not allowlisted/,
     );
   }
@@ -107,9 +106,7 @@ test("configured exact-call policy blocks calls with absent or incomplete params
     sessionKey: KEY,
     taskId: "t",
     allowedTools: ["mcp__openclaw__gateway_exec"],
-    allowedCalls: [
-      { toolName: "mcp__openclaw__gateway_exec", params: { command: "git status" } },
-    ],
+    allowedCalls: [{ toolName: "mcp__openclaw__gateway_exec", params: { command: "git status" } }],
     budget,
   });
   guard.confirm(KEY, { runId: "run-1", sessionKey: KEY });
@@ -131,6 +128,17 @@ test("configured exact-call policy blocks calls with absent or incomplete params
         budget,
       }),
     /exact params/,
+  );
+  assert.throws(
+    () =>
+      guard.bind({
+        sessionKey: "agent:main:subagent:oca-3333",
+        taskId: "t3",
+        allowedTools: ["read", "write"],
+        allowedCalls: [{ toolName: "read", params: {} }],
+        budget,
+      }),
+    /constrain every granted tool/,
   );
 });
 
@@ -255,6 +263,31 @@ test("tools worker binds before run, enforces grant during run, cleans up after"
   );
 });
 
+test("tools worker carries exact allowed calls through dispatch into the guard", async () => {
+  const guard = new ToolGuard();
+  let boundKey;
+  const subagent = fakeSubagent({
+    async run(a) {
+      boundKey = a.sessionKey;
+      return { runId: "run-9", sessionKey: a.sessionKey };
+    },
+    async waitForRun() {
+      const ask = (params) =>
+        guard.check({ sessionKey: boundKey, runId: "run-9", toolName: "read", params });
+      assert.deepEqual(ask({ path: "README.md" }), {});
+      assert.match(ask({ path: "secrets.txt" }).blockReason, /arguments are not allowlisted/);
+      return { status: "ok" };
+    },
+  });
+  const worker = createBoundWorker({ subagent, guard, agentId: "main" });
+  const out = await dispatchTask(
+    task({ allowedCalls: [{ toolName: "read", params: { path: "README.md" } }] }),
+    { worker, resolveModel: () => "example/model-fast" },
+  );
+  assert.equal(out.output.text, "answer");
+  assert.equal(guard.size, 0);
+});
+
 test("cancellation and failed runs release the binding and delete the session", async () => {
   const guard = new ToolGuard();
   const ac = new AbortController();
@@ -358,10 +391,7 @@ test("plugin registers a priority hook that enforces the guard; disabled by defa
     ).block,
     true,
   );
-  assert.equal(
-    (await hook({ toolName: "read" }, { sessionKey: KEY, runId: "run-1" })).block,
-    true,
-  );
+  assert.equal((await hook({ toolName: "read" }, { sessionKey: KEY, runId: "run-1" })).block, true);
   assert.equal((await hook({ toolName: "exec", runId: "run-1" }, { sessionKey: KEY })).block, true);
   assert.deepEqual(await hook(undefined, undefined), {});
   assert.equal(typeof handle.createWorker({ agentId: "main" }), "function");
