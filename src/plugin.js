@@ -102,6 +102,7 @@ export function registerOrchestration(
         runId: event?.runId ?? ctx?.runId,
         toolName: event?.toolName,
         toolCallId: event?.toolCallId,
+        params: event?.params,
       }),
     { priority: 1000 },
   );

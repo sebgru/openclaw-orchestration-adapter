@@ -95,6 +95,19 @@
               "minLength": 1
             }
           },
+          "allowedCalls": {
+            "type": "array",
+            "description": "Optional deployment-owned exact tool-argument allowlist. When present, every allowed tool must have at least one exact call entry; worker calls with different or extra arguments are blocked.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["toolName", "params"],
+              "properties": {
+                "toolName": { "type": "string", "minLength": 1 },
+                "params": { "type": "object" }
+              }
+            }
+          },
           "maxCalls": {
             "type": "integer",
             "minimum": 1

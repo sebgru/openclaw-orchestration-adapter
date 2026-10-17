@@ -54,6 +54,86 @@ test("granted tool passes; ungranted, delegation, and unbound calls block", () =
   assert.deepEqual(guard.check({ toolName: "exec" }), {});
 });
 
+test("deployment-owned exact argument allowlist blocks shell command changes", () => {
+  const toolName = "mcp__openclaw__gateway_exec";
+  const command = "git -C /workspace/project status --short";
+  const guard = new ToolGuard();
+  guard.bind({
+    sessionKey: KEY,
+    taskId: "t",
+    allowedTools: [toolName],
+    allowedCalls: [{ toolName, params: { command } }],
+    budget,
+  });
+  guard.confirm(KEY, { runId: "run-1", sessionKey: KEY });
+
+  assert.deepEqual(
+    guard.check({
+      sessionKey: KEY,
+      runId: "run-1",
+      toolName,
+      toolCallId: "call-1",
+      params: { command },
+    }),
+    {},
+  );
+  assert.match(
+    guard.check({
+      sessionKey: KEY,
+      runId: "run-1",
+      toolName,
+      toolCallId: "call-1",
+      params: { command: `${command}; id` },
+    }).blockReason,
+    /toolCallId reused/,
+  );
+  for (const params of [
+    { command: `${command}; cat /etc/passwd` },
+    { command, elevated: true },
+    { command, workdir: "/" },
+    { command: "git -C /workspace/project status --short && id" },
+  ]) {
+    assert.match(
+      guard.check({ sessionKey: KEY, runId: "run-1", toolName, params })
+        .blockReason,
+      /arguments are not allowlisted/,
+    );
+  }
+});
+
+test("configured exact-call policy blocks calls with absent or incomplete params", () => {
+  const guard = new ToolGuard();
+  guard.bind({
+    sessionKey: KEY,
+    taskId: "t",
+    allowedTools: ["mcp__openclaw__gateway_exec"],
+    allowedCalls: [
+      { toolName: "mcp__openclaw__gateway_exec", params: { command: "git status" } },
+    ],
+    budget,
+  });
+  guard.confirm(KEY, { runId: "run-1", sessionKey: KEY });
+  assert.match(
+    guard.check({
+      sessionKey: KEY,
+      runId: "run-1",
+      toolName: "mcp__openclaw__gateway_exec",
+    }).blockReason,
+    /arguments are not allowlisted/,
+  );
+  assert.throws(
+    () =>
+      guard.bind({
+        sessionKey: "agent:main:subagent:oca-2222",
+        taskId: "t2",
+        allowedTools: ["mcp__openclaw__gateway_exec"],
+        allowedCalls: [{ toolName: "read", params: {} }],
+        budget,
+      }),
+    /exact params/,
+  );
+});
+
 test("runId mismatch, missing runId, and unconfirmed binding block", () => {
   const { guard } = bound();
   assert.equal(call(guard, { runId: "run-2" }).block, true);
@@ -253,11 +333,35 @@ test("plugin registers a priority hook that enforces the guard; disabled by defa
   assert.equal(hooks[0][0], "before_tool_call");
 
   const handle = registerOrchestration(api);
-  handle.guard.bind({ sessionKey: KEY, taskId: "t", allowedTools: ["read"], budget });
+  handle.guard.bind({
+    sessionKey: KEY,
+    taskId: "t",
+    allowedTools: ["read"],
+    allowedCalls: [{ toolName: "read", params: { path: "README.md" } }],
+    budget,
+  });
   handle.guard.confirm(KEY, { runId: "run-1", sessionKey: KEY });
   const hook = hooks.at(-1)[1];
-  assert.deepEqual(await hook({ toolName: "read", runId: "run-1" }, { sessionKey: KEY }), {});
-  assert.deepEqual(await hook({ toolName: "read" }, { sessionKey: KEY, runId: "run-1" }), {});
+  assert.deepEqual(
+    await hook(
+      { toolName: "read", params: { path: "README.md" }, runId: "run-1" },
+      { sessionKey: KEY },
+    ),
+    {},
+  );
+  assert.equal(
+    (
+      await hook(
+        { toolName: "read", params: { path: "README.md", recursive: true }, runId: "run-1" },
+        { sessionKey: KEY },
+      )
+    ).block,
+    true,
+  );
+  assert.equal(
+    (await hook({ toolName: "read" }, { sessionKey: KEY, runId: "run-1" })).block,
+    true,
+  );
   assert.equal((await hook({ toolName: "exec", runId: "run-1" }, { sessionKey: KEY })).block, true);
   assert.deepEqual(await hook(undefined, undefined), {});
   assert.equal(typeof handle.createWorker({ agentId: "main" }), "function");

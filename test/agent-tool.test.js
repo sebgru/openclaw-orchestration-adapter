@@ -253,6 +253,107 @@ test("normalizeDispatchConfig validates the block", () => {
   assert.throws(() => normalizeDispatchConfig({ allowedTools: [1] }), /strings/);
   assert.throws(() => normalizeDispatchConfig({ allowedTools: ["subagents"] }), /cannot grant/);
   assert.throws(() => normalizeDispatchConfig({ maxCalls: 0 }), /positive/);
+  assert.throws(
+    () =>
+      normalizeDispatchConfig({
+        allowedTools: ["mcp__openclaw__gateway_exec"],
+        allowedCalls: [],
+      }),
+    /constrain every allowed tool/,
+  );
+  const exact = normalizeDispatchConfig({
+    allowedTools: ["mcp__openclaw__gateway_exec"],
+    allowedCalls: [
+      {
+        toolName: "mcp__openclaw__gateway_exec",
+        params: { command: "git status --short", title: "Read-only status check" },
+      },
+    ],
+  });
+  assert.deepEqual(exact.allowedCalls, [
+    {
+      toolName: "mcp__openclaw__gateway_exec",
+      params: { command: "git status --short", title: "Read-only status check" },
+    },
+  ]);
+  assert.throws(
+    () =>
+      normalizeDispatchConfig({
+        allowedTools: ["mcp__openclaw__gateway_exec"],
+        allowedCalls: [{ toolName: "read", params: {} }],
+      }),
+    /must be in allowedTools/,
+  );
+  assert.throws(
+    () =>
+      normalizeDispatchConfig({
+        allowedTools: ["mcp__openclaw__gateway_exec", "read"],
+        allowedCalls: [
+          {
+            toolName: "mcp__openclaw__gateway_exec",
+            params: { command: "git status" },
+          },
+        ],
+      }),
+    /constrain every allowed tool/,
+  );
+  assert.throws(
+    () =>
+      normalizeDispatchConfig({
+        allowedTools: ["mcp__openclaw__gateway_exec"],
+        allowedCalls: [
+          {
+            toolName: "mcp__openclaw__gateway_exec",
+            params: { command: "x".repeat(4097) },
+          },
+        ],
+      }),
+    /exceeds 4096 characters/,
+  );
+  assert.throws(
+    () =>
+      normalizeDispatchConfig({
+        allowedTools: ["read"],
+        allowedCalls: Array.from({ length: 4 }, (_, i) => ({
+          toolName: "read",
+          params: { text: String(i).repeat(4000) },
+        })),
+      }),
+    /exceed 12000 characters total/,
+  );
+});
+
+test("exact allowed-call policy is deployment-owned and copied into the task", () => {
+  const dispatch = {
+    allowedTools: ["mcp__openclaw__gateway_exec"],
+    allowedCalls: [
+      {
+        toolName: "mcp__openclaw__gateway_exec",
+        params: { command: "git status --short", title: "Read-only status check" },
+      },
+    ],
+  };
+  const limits = normalizeDispatchConfig(dispatch);
+  const task = buildDispatchTask(
+    { ...valid, mode: "tools", allowedTools: ["mcp__openclaw__gateway_exec"] },
+    limits,
+    owner,
+  );
+  assert.deepEqual(task.allowedCalls, dispatch.allowedCalls);
+  assert.throws(
+    () =>
+      buildDispatchTask(
+        {
+          ...valid,
+          mode: "tools",
+          allowedTools: ["mcp__openclaw__gateway_exec"],
+          allowedCalls: [],
+        },
+        limits,
+        owner,
+      ),
+    /unknown parameters/,
+  );
 });
 
 test("registerOrchestration requires api.registerTool when dispatch is configured", () => {

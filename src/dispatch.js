@@ -8,6 +8,7 @@ function makeGrant(task) {
     mode: task.mode ?? "tools",
     scope: structuredClone(task.scope),
     allowedTools: [...task.allowedTools],
+    ...(task.allowedCalls === undefined ? {} : { allowedCalls: structuredClone(task.allowedCalls) }),
     prohibitedActions: [...task.prohibitedActions],
     mayDelegate: false,
     budget: {

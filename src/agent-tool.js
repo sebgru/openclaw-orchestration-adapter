@@ -18,7 +18,13 @@ const stringList = (v) => Array.isArray(v) && v.every((s) => typeof s === "strin
 export function normalizeDispatchConfig(config) {
   if (config === undefined) return undefined;
   if (!isRecord(config)) throw new TypeError("dispatch must be an object");
-  const allowed = new Set(["allowedTools", "maxCalls", "maxTimeoutMs", "maxTokens"]);
+  const allowed = new Set([
+    "allowedTools",
+    "allowedCalls",
+    "maxCalls",
+    "maxTimeoutMs",
+    "maxTokens",
+  ]);
   for (const key of Object.keys(config)) {
     if (!allowed.has(key)) throw new TypeError(`dispatch.${key} is not a known setting`);
   }
@@ -26,6 +32,55 @@ export function normalizeDispatchConfig(config) {
   if (!stringList(allowedTools)) throw new TypeError("dispatch.allowedTools must be strings");
   const clash = allowedTools.filter((t) => DELEGATION_TOOLS.includes(t));
   if (clash.length) throw new TypeError(`dispatch.allowedTools cannot grant ${clash.join(", ")}`);
+  let allowedCalls;
+  if (config.allowedCalls !== undefined) {
+    if (!Array.isArray(config.allowedCalls)) {
+      throw new TypeError("dispatch.allowedCalls must be an array");
+    }
+    if (config.allowedCalls.length > 32) {
+      throw new RangeError("dispatch.allowedCalls must contain at most 32 entries");
+    }
+    let totalAllowedCallChars = 0;
+    allowedCalls = config.allowedCalls.map((call, index) => {
+      if (
+        !isRecord(call) ||
+        Object.keys(call).some((key) => !["toolName", "params"].includes(key)) ||
+        !nonEmpty(call.toolName) ||
+        !isRecord(call.params)
+      ) {
+        throw new TypeError(`dispatch.allowedCalls[${index}] must contain toolName and params`);
+      }
+      if (!allowedTools.includes(call.toolName)) {
+        throw new TypeError(`dispatch.allowedCalls[${index}].toolName must be in allowedTools`);
+      }
+      let params;
+      try {
+        params = JSON.parse(JSON.stringify(call.params));
+      } catch {
+        throw new TypeError(`dispatch.allowedCalls[${index}].params must be JSON-safe`);
+      }
+      if (!isRecord(params)) {
+        throw new TypeError(`dispatch.allowedCalls[${index}].params must be a JSON object`);
+      }
+      const paramsChars = JSON.stringify(params).length;
+      if (paramsChars > 4096) {
+        throw new RangeError(`dispatch.allowedCalls[${index}].params exceeds 4096 characters`);
+      }
+      totalAllowedCallChars += paramsChars;
+      if (totalAllowedCallChars > 12_000) {
+        throw new RangeError("dispatch.allowedCalls parameters exceed 12000 characters total");
+      }
+      return Object.freeze({ toolName: call.toolName, params: Object.freeze(params) });
+    });
+    const covered = new Set(allowedCalls.map((call) => call.toolName));
+    const uncovered = allowedTools.filter((toolName) => !covered.has(toolName));
+    if (uncovered.length) {
+      throw new TypeError(
+        `dispatch.allowedCalls must constrain every allowed tool: ${uncovered.join(", ")}`,
+      );
+    }
+    allowedCalls = Object.freeze(allowedCalls);
+  }
   const limit = (key, fallback) => {
     const value = config[key] ?? fallback;
     if (!Number.isInteger(value) || value < 1) {
@@ -35,6 +90,7 @@ export function normalizeDispatchConfig(config) {
   };
   return Object.freeze({
     allowedTools: Object.freeze([...new Set(allowedTools)]),
+    ...(allowedCalls === undefined ? {} : { allowedCalls }),
     maxCalls: limit("maxCalls", DEFAULT_LIMITS.maxCalls),
     timeoutMs: limit("maxTimeoutMs", DEFAULT_LIMITS.timeoutMs),
     maxTokens: limit("maxTokens", DEFAULT_LIMITS.maxTokens),
@@ -142,6 +198,11 @@ export function buildDispatchTask(params, limits, context) {
     goal: params.goal,
     successCriteria: params.successCriteria,
     allowedTools: [...tools],
+    ...(limits.allowedCalls === undefined
+      ? {}
+      : {
+          allowedCalls: limits.allowedCalls.filter((call) => tools.includes(call.toolName)),
+        }),
     prohibitedActions: params.prohibitedActions ?? [],
     mode,
     routeTier: params.routeTier,
