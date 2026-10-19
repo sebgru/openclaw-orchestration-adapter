@@ -35,6 +35,11 @@
         "default": false,
         "description": "Emit sanitized worker binding lifecycle events for troubleshooting. Off by default; never logs task contents or raw identifiers."
       },
+      "canary": {
+        "type": "boolean",
+        "default": false,
+        "description": "Register the opt-in orchestration_canary tool (constant, no side effects) so a worker tool grant can be proven. Still requires dispatch.allowedTools and the operator tool allowlist."
+      },
       "agentId": {
         "type": "string",
         "pattern": "^[A-Za-z0-9_-]+$"
@@ -125,12 +130,16 @@
     }
   },
   "contracts": {
-    "tools": ["orchestration_dispatch"]
+    "tools": ["orchestration_dispatch", "orchestration_canary"]
   },
   "toolMetadata": {
     "orchestration_dispatch": {
       "optional": true,
       "sideEffecting": true
+    },
+    "orchestration_canary": {
+      "optional": true,
+      "sideEffecting": false
     }
   }
 }

@@ -3,6 +3,7 @@ import {
   createDispatchToolFactory,
   normalizeDispatchConfig,
 } from "./agent-tool.js";
+import { CANARY_TOOL_NAME, createCanaryToolFactory } from "./canary-tool.js";
 import { dispatchReadyBatch, dispatchTask } from "./dispatch.js";
 import {
   assertWorkerModel,
@@ -89,7 +90,14 @@ function isGuardLike(g) {
  */
 export function registerOrchestration(
   api,
-  { guard: suppliedGuard, agentId, workerRoutes, dispatch, lifecycleDiagnostics = false } = {},
+  {
+    guard: suppliedGuard,
+    agentId,
+    workerRoutes,
+    dispatch,
+    canary = false,
+    lifecycleDiagnostics = false,
+  } = {},
 ) {
   const guard = suppliedGuard ?? sharedToolGuard(api, { lifecycleDiagnostics });
   const routes = normalizeWorkerRoutes(workerRoutes);
@@ -112,6 +120,7 @@ export function registerOrchestration(
       guard,
       agentId: id,
       buildMessage,
+      ownedTools: canary === true ? [CANARY_TOOL_NAME] : [],
       checkModel: (model, task) => assertWorkerModel(model, { routes, tier: task?.routeTier }),
     });
   const resolverFor = ({ resolveModel, isAvailable }) =>
@@ -148,6 +157,10 @@ export function registerOrchestration(
       },
     );
   }
+  if (canary === true) {
+    if (typeof api.registerTool !== "function") throw new TypeError("api.registerTool required");
+    api.registerTool(createCanaryToolFactory(), { name: CANARY_TOOL_NAME, optional: true });
+  }
   handles.set(api, handle);
   return handle;
 }
@@ -168,6 +181,7 @@ export default {
       agentId: api.pluginConfig.agentId,
       workerRoutes: api.pluginConfig.workerRoutes,
       dispatch: api.pluginConfig.dispatch,
+      canary: api.pluginConfig.canary === true,
       lifecycleDiagnostics: api.pluginConfig.lifecycleDiagnostics === true,
     });
   },
