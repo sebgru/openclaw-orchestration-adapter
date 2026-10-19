@@ -64,10 +64,18 @@ export function defaultWorkerMessage(task) {
  * session a terminal block (fail closed). The model run itself may keep going
  * until the host ends it; its output is discarded.
  *
- * toolsAlsoAllow is deliberately never used: it is additive, not a ceiling.
- * The ceiling is the before_tool_call guard in plugin.js.
+ * toolsAlsoAllow is additive, not a ceiling, so it is passed only for granted
+ * tools in `ownedTools` (tools this plugin itself registers, e.g. the canary);
+ * host tools are never added. The ceiling is the before_tool_call guard in plugin.js.
  */
-export function createBoundWorker({ subagent, guard, agentId, buildMessage, checkModel }) {
+export function createBoundWorker({
+  subagent,
+  guard,
+  agentId,
+  buildMessage,
+  checkModel,
+  ownedTools = [],
+}) {
   if (!subagent || typeof subagent.run !== "function")
     throw new TypeError("subagent runtime required");
   if (!guard) throw new TypeError("guard required");
@@ -91,6 +99,7 @@ export function createBoundWorker({ subagent, guard, agentId, buildMessage, chec
     const sessionKey = newWorkerSessionKey(agentId);
     const correlationId = randomUUID();
     const emit = (event, fields = {}) => guard.lifecycle?.({ event, correlationId, ...fields });
+    const alsoAllow = grant.allowedTools.filter((t) => ownedTools.includes(t));
     guard.bind({
       sessionKey,
       taskId: task.id,
@@ -113,6 +122,7 @@ export function createBoundWorker({ subagent, guard, agentId, buildMessage, chec
         message: message(task, grant),
         promptMode: "minimal",
         deliver: false,
+        ...(alsoAllow.length ? { toolsAlsoAllow: alsoAllow } : {}),
         ...splitModel(model),
       });
       guard.confirm(sessionKey, accepted);

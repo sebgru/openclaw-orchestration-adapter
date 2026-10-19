@@ -1,3 +1,4 @@
+export { CANARY_RESULT, CANARY_TOOL_NAME, createCanaryToolFactory } from "./canary-tool.js";
 export {
   DEFAULT_MAX_TOKENS,
   TASK_CONTRACT_VERSION,

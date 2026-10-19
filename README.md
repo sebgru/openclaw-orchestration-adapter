@@ -192,3 +192,7 @@ git push origin main --follow-tags
 
 The release tarball is published as
 `openclaw-orchestration-adapter-<version>.tgz` on the GitHub Release page.
+
+## Worker canary tool (opt-in)
+
+Set `canary: true` in plugin config to register `orchestration_canary`, a plugin-owned tool that takes no arguments, has no side effects, and always returns `{"ok":true,"canary":"orchestration-canary-v1"}`. It lets you prove an end-to-end worker tool grant without exposing any host tool. It is off by default and still requires listing it in `dispatch.allowedTools` and the operator tool allowlist. Only plugin-owned granted tools are passed to the host as `toolsAlsoAllow`; the `before_tool_call` guard remains the ceiling.
