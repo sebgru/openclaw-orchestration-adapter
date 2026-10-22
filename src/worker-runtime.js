@@ -62,7 +62,11 @@ export function defaultWorkerMessage(task) {
  * an in-flight run. On abort, timeout, or error the only guaranteed action is
  * revoking the binding, which makes every later before_tool_call in that
  * session a terminal block (fail closed). The model run itself may keep going
- * until the host ends it; its output is discarded.
+ * until the host ends it; its output is discarded. Abort also requests a
+ * best-effort deleteSession() (not cancellation) so a parked waitForRun()
+ * cannot leave the worker session undeleted. The request waits until run() has
+ * resolved: deleting during admission could precede session creation and the
+ * once-only guard would then skip the real cleanup.
  *
  * toolsAlsoAllow is additive, not a ceiling, so it is passed only for granted
  * tools in `ownedTools` (tools this plugin itself registers, e.g. the canary);
@@ -108,12 +112,28 @@ export function createBoundWorker({
       budget: grant.budget,
       correlationId,
     });
+    // Idempotent: the abort handler and the finally block may both reach it. The
+    // abort handler must clean up itself because a never-settling waitForRun()
+    // parks the worker before its finally block can run.
+    let deleteStarted = false;
+    let admitted = false;
+    const deleteSessionBestEffort = async () => {
+      if (deleteStarted) return;
+      deleteStarted = true;
+      try {
+        await subagent.deleteSession({ sessionKey });
+      } catch {
+        // Best effort: the binding is already gone, so the session can run nothing.
+      }
+    };
     let terminalReason = "failed";
     emit("worker_started", { session: guard.fingerprint?.(sessionKey) ?? null });
     const onAbort = () => {
       terminalReason = "aborted";
       emit("abort_requested");
       guard.release(sessionKey, "aborted");
+      // Before admission the session may not exist yet; cleanup follows run().
+      if (admitted) void deleteSessionBestEffort();
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
@@ -125,6 +145,8 @@ export function createBoundWorker({
         ...(alsoAllow.length ? { toolsAlsoAllow: alsoAllow } : {}),
         ...splitModel(model),
       });
+      admitted = true;
+      if (terminalReason === "aborted") void deleteSessionBestEffort();
       guard.confirm(sessionKey, accepted);
       emit("run_wait_started", {
         session: guard.fingerprint?.(sessionKey) ?? null,
@@ -163,11 +185,7 @@ export function createBoundWorker({
     } /* c8 ignore next */ finally {
       signal?.removeEventListener("abort", onAbort);
       guard.release(sessionKey, terminalReason);
-      try {
-        await subagent.deleteSession({ sessionKey });
-      } catch {
-        // Best effort: the binding is already gone, so the session can run nothing.
-      }
+      await deleteSessionBestEffort();
     }
   };
 }
