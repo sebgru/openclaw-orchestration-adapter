@@ -24,6 +24,7 @@ export function normalizeDispatchConfig(config) {
     "maxCalls",
     "maxTimeoutMs",
     "maxTokens",
+    "plan",
   ]);
   for (const key of Object.keys(config)) {
     if (!allowed.has(key)) throw new TypeError(`dispatch.${key} is not a known setting`);
@@ -94,6 +95,7 @@ export function normalizeDispatchConfig(config) {
     maxCalls: limit("maxCalls", DEFAULT_LIMITS.maxCalls),
     timeoutMs: limit("maxTimeoutMs", DEFAULT_LIMITS.timeoutMs),
     maxTokens: limit("maxTokens", DEFAULT_LIMITS.maxTokens),
+    ...(config.plan === undefined ? {} : { plan: config.plan }), // validated by normalizePlanConfig
   });
 }
 
@@ -130,7 +132,7 @@ const BUDGET_KEYS = new Set(Object.keys(dispatchToolParameters.properties.budget
  * scope, or undefined when any required fact is absent so callers fail closed:
  * no placeholder tenant, channel, or conversation is ever invented.
  */
-function trustedScope(context) {
+export function trustedScope(context) {
   if (!isRecord(context)) return undefined;
   if (context.senderIsOwner !== true || context.sandboxed === true) return undefined;
   const channel = context.deliveryContext?.channel;

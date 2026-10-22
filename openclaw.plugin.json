@@ -124,16 +124,33 @@
           "maxTokens": {
             "type": "integer",
             "minimum": 1
+          },
+          "plan": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Enables the optional orchestration_run_plan tool (multi-task dependency waves with context-separated model judgment). Per-task grants and budgets are capped by the dispatch ceiling above.",
+            "properties": {
+              "maxTasks": { "type": "integer", "minimum": 1, "maximum": 16 },
+              "maxParallel": { "type": "integer", "minimum": 1, "maximum": 8 },
+              "verifierTier": {
+                "type": "string",
+                "enum": ["priority", "cheap", "standard", "strong"]
+              }
+            }
           }
         }
       }
     }
   },
   "contracts": {
-    "tools": ["orchestration_dispatch", "orchestration_canary"]
+    "tools": ["orchestration_dispatch", "orchestration_run_plan", "orchestration_canary"]
   },
   "toolMetadata": {
     "orchestration_dispatch": {
+      "optional": true,
+      "sideEffecting": true
+    },
+    "orchestration_run_plan": {
       "optional": true,
       "sideEffecting": true
     },

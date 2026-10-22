@@ -71,7 +71,11 @@ test("tool is registered once as optional only when dispatch config exists", () 
   assert.equal(on.tools.length, 1);
   assert.equal(typeof on.tools[0][0], "function");
   assert.deepEqual(on.tools[0][1], { name: DISPATCH_TOOL_NAME, optional: true });
-  assert.deepEqual(manifest.contracts.tools, [DISPATCH_TOOL_NAME, "orchestration_canary"]);
+  assert.deepEqual(manifest.contracts.tools, [
+    DISPATCH_TOOL_NAME,
+    "orchestration_run_plan",
+    "orchestration_canary",
+  ]);
   assert.equal(manifest.toolMetadata[DISPATCH_TOOL_NAME].optional, true);
 });
 

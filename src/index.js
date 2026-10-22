@@ -42,3 +42,12 @@ export {
   createDispatchToolFactory,
   normalizeDispatchConfig,
 } from "./agent-tool.js";
+export {
+  PLAN_TOOL_NAME,
+  buildPlanFromParams,
+  createModelVerifier,
+  createPlanToolFactory,
+  normalizePlanConfig,
+  planToolParameters,
+  runPlanWaves,
+} from "./plan-tool.js";
