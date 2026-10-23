@@ -96,6 +96,22 @@ Plugin config (`plugins.entries.openclaw-orchestration-adapter.config`); without
 
 Adding `dispatch.plan` (e.g. `{ "maxTasks": 8, "maxParallel": 2, "verifierTier": "strong" }`) also registers the optional `orchestration_run_plan` tool, exposed under the same conditions as `orchestration_dispatch` (add it to `tools.alsoAllow`). It accepts up to `maxTasks` (hard cap 16) tasks with local `id`s and `dependencies`, validates the whole plan (unknown parameters, duplicate/unknown/cyclic dependencies, per-task grants and budgets against the `dispatch` ceiling) before dispatching anything, then runs dependency waves of at most `maxParallel` tasks.
 
+To grant `orchestration_run_plan` to one agent, add it to that agent's `agents.entries.<id>.tools.alsoAllow`. In the current OpenClaw runtime, an agent-specific `alsoAllow` list takes precedence over the global `tools.alsoAllow` list for that agent, so include every optional plugin tool that agent needs. The list extends the active tool profile; other applicable restrictions, including `deny`, sandbox, and runtime policy, still apply. `allow` and `alsoAllow` cannot both be set in the same scope: merge the tool into that scope's `allow` list, or use a profile with `alsoAllow` instead. For example:
+
+```json
+{
+  "agents": {
+    "entries": {
+      "worker": {
+        "tools": {
+          "alsoAllow": ["orchestration_run_plan"]
+        }
+      }
+    }
+  }
+}
+```
+
 - Each task gets its own grant and budget; there is no aggregate plan budget, so total calls/time can reach the sum of each task's worker and verifier ceilings. Delegation tools, Gateway-related tools, shell/terminal/execution tools, and names containing `restart` are rejected even if allowlisted; scope comes from host context.
 - Each task's output is judged by a separate tool-free completion context (tier `verifierTier`, default the task's tier) that must return `{"ok":true}`; anything else fails the task (fail closed). This is context-separated model judgment, not model-independent or ground-truth verification: the verifier may use the same underlying model as the worker and it checks no side effects. It judges at most the first 20,000 characters of worker output; long results can be rejected because relevant evidence was truncated. Each task reports `verifierAccepted`, plus `verification.verifierModel`, `workerModel`, `sameModelAsWorker`, `method` and `sideEffectsChecked: false`. Review results yourself. Execution is fail-fast: after a failed wave, remaining tasks are cancelled. Result output is capped at 8,000 serialized characters per task (up to 128,000 characters across 16 tasks).
 - `gates` are required, and each gate must declare its `phase`. A plan needs at least one `completion` gate (an owner review) or it is rejected before dispatch. Plans are ephemeral and this tool cannot record gate outcomes: a `preflight` gate blocks all dispatch, and the runner always stops at the completion gate with `complete: false`, even when `allTasksSucceeded` is true. Continuing requires a fresh, explicit, owner-directed call; there is no resume.
