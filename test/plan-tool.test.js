@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 import {
   PLAN_TOOL_NAME,
   buildPlanFromParams,
+  createModelVerifier,
+  createPlanToolFactory,
   normalizeDispatchConfig,
   normalizePlanConfig,
   plugin,
+  transitionTask,
 } from "../src/index.js";
 
 function fakeApi(pluginConfig, { verdict = '{"ok":true,"evidence":"met"}' } = {}) {
@@ -347,4 +350,88 @@ test("normalizePlanConfig validates bounds", () => {
   assert.throws(() => normalizePlanConfig({ maxParallel: 0 }), /1 to 8/);
   assert.throws(() => normalizePlanConfig({ verifierTier: "x" }), /route tier/);
   assert.equal(normalizePlanConfig({ verifierTier: "strong" }).verifierTier, "strong");
+});
+
+test("verifier handles missing verdict text, missing evidence, and absent models", async () => {
+  const contract = {
+    contractVersion: 1,
+    id: "t",
+    goal: "g",
+    successCriteria: ["ok"],
+    routeTier: "cheap",
+    budget: { timeoutMs: 1000 },
+    scope: owner,
+  };
+  const verifierFor = (output) => createModelVerifier({ dispatchTask: async () => ({ output }) });
+
+  // Missing output text is rejected without throwing, and undefined models report null.
+  const noText = await verifierFor(undefined)(contract, undefined);
+  assert.deepEqual(noText, {
+    ok: false,
+    evidence: "verifier returned no JSON verdict",
+    method: "context-separated-model-judgment",
+    verifierModel: undefined,
+    workerModel: undefined,
+    sameModelAsWorker: null,
+    sideEffectsChecked: false,
+  });
+
+  // An accepted verdict with no evidence field defaults to an empty evidence string.
+  const noEvidence = await verifierFor({ text: '{"ok":true}' })(
+    contract,
+    { text: "w" },
+    {
+      model: "example/m1",
+    },
+  );
+  assert.equal(noEvidence.ok, true);
+  assert.equal(noEvidence.evidence, "");
+
+  // Output that JSON cannot serialize still yields a bounded evidence string.
+  const fnOutput = await verifierFor({ text: '{"ok":false,"evidence":"x"}' })(contract, () => {});
+  assert.equal(fnOutput.ok, false);
+  assert.equal(fnOutput.evidence, "x");
+});
+
+test("plan results safely bound missing and non-serializable worker output", async () => {
+  const limits = normalizeDispatchConfig({ allowedTools: ["read"], maxCalls: 5, maxTokens: 1000 });
+  const planLimits = normalizePlanConfig({});
+  const outputs = [undefined, () => {}];
+  let batches = 0;
+  const factory = createPlanToolFactory({
+    limits,
+    planLimits,
+    getHandle: () => ({
+      dispatchTask: async () => ({ model: "example/m2", output: { text: "unused" } }),
+      async dispatchReadyBatch(plan, { verify }) {
+        batches += 1;
+        const pending = [...plan.tasks].filter(([, entry]) => entry.state === "pending");
+        if (pending.length === 0) return { dispatched: [] };
+        const dispatched = [];
+        for (const [index, [id, entry]] of pending.entries()) {
+          transitionTask(plan, id, "ready");
+          transitionTask(plan, id, "running");
+          transitionTask(plan, id, "verifying");
+          await verify(entry.contract, outputs[index], { model: "example/m2" });
+          transitionTask(plan, id, "succeeded");
+          dispatched.push({
+            taskId: id,
+            state: "succeeded",
+            model: "example/m2",
+            verification: { ok: true },
+          });
+        }
+        return { dispatched };
+      },
+    }),
+  });
+  const res = await factory(owner).execute("c", {
+    tasks: [t("a"), t("b")],
+    gates: [reviewGate],
+  });
+  assert.equal(batches, 2, "the second wave finds nothing left to dispatch");
+  assert.deepEqual(res.details.waves, [["a", "b"]]);
+  assert.equal(res.details.tasks[0].output, undefined);
+  assert.equal(typeof res.details.tasks[1].output, "function");
+  assert.doesNotThrow(() => JSON.stringify(res.details));
 });
