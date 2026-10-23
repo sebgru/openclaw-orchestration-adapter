@@ -1,6 +1,6 @@
 {
   "name": "openclaw-orchestration-adapter",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "Least-privilege orchestration for OpenClaw agents",
   "type": "module",
   "license": "MIT",
