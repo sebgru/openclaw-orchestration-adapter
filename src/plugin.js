@@ -3,6 +3,7 @@ import {
   createDispatchToolFactory,
   normalizeDispatchConfig,
 } from "./agent-tool.js";
+import { PLAN_TOOL_NAME, createPlanToolFactory, normalizePlanConfig } from "./plan-tool.js";
 import { CANARY_TOOL_NAME, createCanaryToolFactory } from "./canary-tool.js";
 import { dispatchReadyBatch, dispatchTask } from "./dispatch.js";
 import {
@@ -155,6 +156,13 @@ export function registerOrchestration(
         name: DISPATCH_TOOL_NAME,
         optional: true,
       },
+    );
+  }
+  const planLimits = normalizePlanConfig(dispatchLimits?.plan);
+  if (planLimits) {
+    api.registerTool(
+      createPlanToolFactory({ getHandle: () => handle, limits: dispatchLimits, planLimits }),
+      { name: PLAN_TOOL_NAME, optional: true },
     );
   }
   if (canary === true) {
