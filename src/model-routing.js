@@ -7,7 +7,8 @@
  * execution. A failed model invocation is not retried with another candidate.
  */
 
-export const ROUTE_TIERS = Object.freeze(["priority", "cheap", "standard", "strong"]);
+// `review` is a dedicated task intent with its own deployment-owned pool.
+export const ROUTE_TIERS = Object.freeze(["priority", "cheap", "standard", "strong", "review"]);
 export const DEFAULT_WORKER_ROUTES = Object.freeze({});
 
 export class WorkerRouteError extends Error {

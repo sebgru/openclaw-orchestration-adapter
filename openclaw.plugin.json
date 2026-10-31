@@ -84,6 +84,16 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          "review": {
+            "type": "array",
+            "description": "Dedicated review intent: deployment-owned ordered candidates for review tasks.",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       },

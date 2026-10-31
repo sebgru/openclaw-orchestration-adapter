@@ -7,7 +7,7 @@ export function resolveMaxTokens(maxTokens) {
 }
 
 const TASK_MODES = new Set(["tools", "completion"]);
-const ROUTE_TIERS = new Set(["priority", "cheap", "standard", "strong"]);
+const ROUTE_TIERS = new Set(["priority", "cheap", "standard", "strong", "review"]);
 const TASK_STATES = new Set([
   "pending",
   "ready",
@@ -78,7 +78,7 @@ export function validateTask(task) {
     errors.push("completion mode must not grant tools");
   }
   if (!ROUTE_TIERS.has(task.routeTier)) {
-    errors.push("routeTier must be priority, cheap, standard, or strong");
+    errors.push("routeTier must be priority, cheap, standard, strong, or review");
   }
   if (task.model !== undefined && !nonEmptyString(task.model)) {
     errors.push("model must be a non-empty model reference when set");

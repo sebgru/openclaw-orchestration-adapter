@@ -24,6 +24,7 @@ const POOL = Object.freeze({
   cheap: ["example/cheap"],
   standard: ["example/preferred-standard", "example/alternate-standard"],
   strong: ["example/preferred-strong", "example/alternate-strong"],
+  review: ["example/preferred-review", "example/alternate-review"],
 });
 const UNKNOWN_MODEL = "example/not-configured";
 
@@ -71,7 +72,7 @@ function fakeApi(pluginConfig) {
 }
 
 test("package defines route tiers but no provider/model defaults", () => {
-  assert.deepEqual(ROUTE_TIERS, ["priority", "cheap", "standard", "strong"]);
+  assert.deepEqual(ROUTE_TIERS, ["priority", "cheap", "standard", "strong", "review"]);
   assert.deepEqual(DEFAULT_WORKER_ROUTES, {});
   assert.deepEqual(normalizeWorkerRoutes(), {});
 });
@@ -82,6 +83,7 @@ test("configured route arrays are ordered candidate pools and become the allow-l
   assert.equal(await resolve("cheap", task({ routeTier: "cheap" })), "example/cheap");
   assert.equal(await resolve("standard", task()), "example/preferred-standard");
   assert.equal(await resolve("strong", task({ routeTier: "strong" })), "example/preferred-strong");
+  assert.equal(await resolve("review", task({ routeTier: "review" })), "example/preferred-review");
   assert.equal(
     assertWorkerModel("example/alternate-standard", { routes: POOL }),
     "example/alternate-standard",
@@ -161,8 +163,10 @@ test("route configuration validates tier names, lists, entries, and duplicates",
   assert.deepEqual(normalizeWorkerRoutes({ strong: ["example/a"] }).strong, ["example/a"]);
 });
 
-test("task contract accepts the priority tier and an optional model reference", () => {
-  assert.deepEqual(validateTask(task({ routeTier: "priority", model: "example/model" })), []);
+test("task contract accepts every route tier and an optional model reference", () => {
+  for (const routeTier of ROUTE_TIERS) {
+    assert.deepEqual(validateTask(task({ routeTier, model: "example/model" })), []);
+  }
   assert.match(validateTask(task({ model: " " })).join(), /model must be/);
 });
 
