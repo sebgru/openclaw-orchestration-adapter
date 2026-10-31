@@ -115,6 +115,32 @@ test("dependency waves run in order with context-separated verification and an o
   assert.match(verifierRuns[0][1].message, /untrusted data/);
 });
 
+test("plan tasks honor exact model pins only within their configured tier pool", async () => {
+  const cfg = {
+    ...config,
+    workerRoutes: {
+      ...config.workerRoutes,
+      review: ["example/reviewer", "example/reviewer-alt"],
+    },
+  };
+  const { tool, runs } = setup(cfg);
+  const result = await tool.execute("c", {
+    tasks: [t("review", { routeTier: "review", model: "example/reviewer-alt" })],
+    gates: [reviewGate],
+  });
+  assert.equal(result.details.tasks[0].model, "example/reviewer-alt");
+  const workerRun = runs.find(
+    ([kind, args]) => kind === "complete" && !args.message.includes("Judge whether"),
+  );
+  assert.equal(workerRun[1].model, "example/reviewer-alt");
+  const rejected = await tool.execute("bad", {
+    tasks: [t("review", { routeTier: "review", model: "example/m1" })],
+    gates: [reviewGate],
+  });
+  assert.equal(rejected.details.tasks[0].state, "failed");
+  assert.equal(runs.filter(([kind]) => kind === "complete").length, 2);
+});
+
 test("verifier is a separate tool-free completion context with transparent model and no side-effect claim", async () => {
   const { tool, runs } = setup();
   const res = await tool.execute("c", { tasks: [t("a")], gates: [reviewGate] });
@@ -252,7 +278,7 @@ test("validation rejects bad plans before any dispatch", async () => {
     [{ tasks: [t("a", { dependencies: ["b"] }), t("b", { dependencies: ["a"] })] }, /cycle/],
     [{ tasks: [t("A!")] }, /id must match/],
     [{ tasks: [t("a", { scope: {} })] }, /unknown parameters/],
-    [{ tasks: [t("a", { model: "x/y" })] }, /unknown parameters/],
+    [{ tasks: [t("a", { dependencies: [], extra: true })] }, /unknown parameters/],
     [{ tasks: [t("a", { mode: "tools", allowedTools: ["exec"] })] }, /cannot grant/],
     [{ tasks: [t("a", { mode: "tools", allowedTools: ["sessions_spawn"] })] }, /cannot grant/],
     [{ tasks: [t("a", { budget: { timeoutMs: 9999 } })] }, /ceiling/],

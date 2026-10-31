@@ -106,7 +106,18 @@ export const dispatchToolParameters = Object.freeze({
   properties: {
     goal: { type: "string", minLength: 1 },
     successCriteria: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
-    routeTier: { type: "string", enum: [...ROUTE_TIERS] },
+    routeTier: {
+      type: "string",
+      enum: [...ROUTE_TIERS],
+      description: "Deployment-owned ordered worker pool; review is the dedicated review intent.",
+    },
+    model: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Optional exact model reference in the selected tier's configured workerRoutes pool. " +
+        "Fails closed if outside that pool or unavailable; never substitutes another model.",
+    },
     mode: { type: "string", enum: ["tools", "completion"] },
     allowedTools: { type: "array", items: { type: "string", minLength: 1 } },
     prohibitedActions: { type: "array", items: { type: "string", minLength: 1 } },
@@ -149,8 +160,9 @@ export function trustedScope(context) {
 /**
  * Build a task contract from model-supplied params. Trust boundary: scope comes
  * from host tool context, never params; tools and budget must fit the operator
- * ceiling; delegation is never grantable; there is no model override, retry, or
- * dependency input.
+ * ceiling; delegation is never grantable. An optional exact model pin is checked
+ * against the selected tier's deployment-owned pool during dispatch; retries and
+ * dependencies are not inputs.
  */
 export function buildDispatchTask(params, limits, context) {
   if (!isRecord(params)) throw new TypeError("parameters must be an object");
@@ -208,6 +220,7 @@ export function buildDispatchTask(params, limits, context) {
     prohibitedActions: params.prohibitedActions ?? [],
     mode,
     routeTier: params.routeTier,
+    ...(params.model === undefined ? {} : { model: params.model }),
     budget,
     scope,
     outputSchema: params.outputSchema ?? { type: "object" },

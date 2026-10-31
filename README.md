@@ -89,7 +89,7 @@ Plugin config (`plugins.entries.openclaw-orchestration-adapter.config`); without
 
 - `dispatch` is an operator-owned ceiling; the calling agent can only narrow it. Delegation tools are never grantable, completion mode (default) grants no tools, and budgets above the ceiling are rejected.
 - For a strict command/tool-argument allowlist, configure `dispatch.allowedCalls`. Every `allowedTools` entry must then have at least one entry; the worker receives those operator-owned exact parameters, and its complete argument object must match one configured `params` object. Extra fields, changed commands, or missing arguments are blocked by the adapter's `before_tool_call` hook before the host tool runs. This can constrain `gateway_exec` to fixed command and option values. Do not put credentials or secrets in allowlisted parameters. Omitting `allowedCalls` preserves the prior name-only grant behavior.
-- Task scope (`agentId`, `deliveryContext.channel`, `sessionKey`) is taken from host tool context, not model input; unknown parameters are rejected. The model cannot choose a model, retries, or dependencies; the tier's `workerRoutes` pool still decides the model and an unconfigured tier fails closed.
+- Task scope (`agentId`, `deliveryContext.channel`, `sessionKey`) is taken from host tool context, not model input; unknown parameters are rejected. The caller may supply an optional `model` exact pin, but cannot choose retries or dependencies. The pin must be in the selected tier's deployment-configured `workerRoutes` pool; an out-of-pool or unavailable pin fails closed without substitution. An unconfigured tier also fails closed.
 - A single dispatch has no independent verifier, so results are returned with `verified: false` and must be checked by the caller.
 
 ### Multi-task plan runner tool
@@ -120,7 +120,7 @@ To grant `orchestration_run_plan` to one agent, add it to that agent's `agents.e
 
 `createWorkerModelResolver()` selects a model for dispatched execution workers only. It registers no model-resolution hook and never changes the owner/main-session chain. The package contains no provider-specific model names or default routes: deployments configure `workerRoutes` in the plugin config.
 
-`workerRoutes` is a set of deployment-owned candidate pools and the allow-list for automatic worker use:
+`workerRoutes` is a set of deployment-owned ordered candidate pools and the allow-list for automatic worker use. Tiers express task intent, not fixed models or owner-specific defaults. Only `review` is the review-specific intent; `strong` remains a general execution tier:
 
 | Tier       | Intended use                             |
 | ---------- | ---------------------------------------- |
@@ -128,6 +128,7 @@ To grant `orchestration_run_plan` to one agent, add it to that agent's `agents.e
 | `cheap`    | bounded lookups, summaries, simple edits |
 | `standard` | normal coding and execution              |
 | `strong`   | debugging, complex or high-stakes work   |
+| `review`   | dedicated code or artifact review        |
 
 Example (replace the placeholders with models actually configured on your host):
 
@@ -136,13 +137,14 @@ Example (replace the placeholders with models actually configured on your host):
   "workerRoutes": {
     "cheap": ["provider/model-cheap"],
     "standard": ["preferred-provider/model-standard", "alternate-provider/model-standard"],
-    "strong": ["preferred-provider/model-strong", "alternate-provider/model-strong"]
+    "strong": ["preferred-provider/model-strong", "alternate-provider/model-strong"],
+    "review": ["preferred-provider/model-review", "alternate-provider/model-review"]
   }
 }
 ```
 
 - Candidate order is the deployment's preference order. When an availability callback is supplied, the resolver picks the first available candidate before dispatch. The selected worker model is not replaced after execution starts; normal task retry policy remains separate and is not provider/model failover.
-- A pool is also the allow-list: caller-supplied model resolutions and `task.model` must be present in the configured pool for that task's tier. With no configured candidate, resolution fails closed rather than using a package default.
+- A pool is also the allow-list: caller-supplied model resolutions and `task.model` (including the public `orchestration_dispatch` tool's optional `model` parameter and the equivalent field on each plan task) must be present in the configured pool for that task's tier. An exact pin selects only that model, even when another candidate ranks higher; an unavailable or out-of-pool pin fails closed without trying another candidate. With no configured candidate, resolution fails closed rather than using a package default.
 - Model references are opaque strings; this package does not enforce provider, subscription, or authentication policy. Deployments should include only models allowed by their own auth and budget policy.
 
 `renderTaskHandoff()` builds a bounded Markdown handoff draft from explicit status,

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   DISPATCH_TOOL_NAME,
   buildDispatchTask,
+  createDispatchToolFactory,
   normalizeDispatchConfig,
   plugin,
   registerOrchestration,
@@ -111,6 +112,84 @@ test("execute dispatches a completion task and flags output unverified", async (
   assert.equal(res.content[0].type, "text");
 });
 
+test("public schema exposes review intent and optional exact-model pin", () => {
+  const { api, tools } = fakeApi(config);
+  plugin.register(api);
+  const tool = tools[0][0](owner);
+  assert.ok(tool.parameters.properties.routeTier.enum.includes("review"));
+  assert.equal(tool.parameters.properties.model.type, "string");
+  assert.equal(tool.parameters.properties.model.minLength, 1);
+  const task = buildDispatchTask(
+    { ...valid, routeTier: "review", model: "example/reviewer" },
+    normalizeDispatchConfig(config.dispatch),
+    owner,
+  );
+  assert.equal(task.model, "example/reviewer");
+  assert.equal(task.routeTier, "review");
+});
+
+test("public dispatch honors an exact pin only in the selected tier pool", async () => {
+  const { api, tools, runs } = fakeApi({
+    ...config,
+    workerRoutes: {
+      ...config.workerRoutes,
+      review: ["example/preferred-review", "example/exact-review"],
+    },
+  });
+  plugin.register(api);
+  const tool = tools[0][0](owner);
+  const result = await tool.execute("pin", {
+    ...valid,
+    routeTier: "review",
+    model: "example/exact-review",
+  });
+  assert.equal(result.details.model, "example/exact-review");
+  assert.equal(runs[0][1].model, "example/exact-review");
+  for (const model of ["example/m1", "example/not-configured"]) {
+    await assert.rejects(tool.execute("bad-pin", { ...valid, routeTier: "review", model }), {
+      code: "model-not-allowed",
+    });
+  }
+  for (const model of ["", " ", null, 42]) {
+    await assert.rejects(
+      tool.execute("invalid-pin", { ...valid, routeTier: "review", model }),
+      /model must be a non-empty model reference/,
+    );
+  }
+  assert.equal(runs.length, 1);
+});
+
+test("public dispatch never substitutes for an unavailable exact pin", async () => {
+  const { api, runs } = fakeApi(config);
+  const handle = registerOrchestration(api, {
+    workerRoutes: { review: ["example/available-review", "example/offline-review"] },
+  });
+  const checked = [];
+  const factory = createDispatchToolFactory({
+    limits: normalizeDispatchConfig(config.dispatch),
+    getHandle: () => ({
+      dispatchTask: (task, options) =>
+        handle.dispatchTask(task, {
+          ...options,
+          isAvailable: (model) => {
+            checked.push(model);
+            return model === "example/available-review";
+          },
+        }),
+    }),
+  });
+  await assert.rejects(
+    factory(owner).execute("offline-pin", {
+      ...valid,
+      routeTier: "review",
+      model: "example/offline-review",
+    }),
+    { code: "unavailable" },
+  );
+  assert.deepEqual(checked, ["example/offline-review"]);
+  assert.equal(runs.length, 0);
+});
+
 test("tools mode runs under the guard with the granted tool list only", async () => {
   const { api, tools, runs } = fakeApi(config);
   plugin.register(api);
@@ -201,13 +280,13 @@ test("route pools still gate the model: unconfigured tier fails closed", async (
   assert.equal(runs.length, 0);
 });
 
-test("scope comes from host context, not params; no model override is accepted", () => {
+test("scope comes from host context; retry and dependency overrides remain rejected", () => {
   const limits = normalizeDispatchConfig(config.dispatch);
   assert.throws(
     () => buildDispatchTask({ ...valid, scope: { tenantId: "evil" } }, limits, owner),
     /unknown parameters: scope/,
   );
-  assert.throws(() => buildDispatchTask({ ...valid, model: "x/y" }, limits, owner), /unknown/);
+  assert.throws(() => buildDispatchTask({ ...valid, dependencies: [] }, limits, owner), /unknown/);
   assert.throws(
     () => buildDispatchTask({ ...valid, budget: { maxRetries: 1 } }, limits, owner),
     /unknown budget/,
