@@ -9,6 +9,10 @@ Least-privilege orchestration for OpenClaw agents: bounded plans and task dispat
 policy-aware model selection, cancellation, verification, and handoffs—without a
 persistent workflow database.
 
+## Orchestration 2.0 requirements
+
+Sebastian accepted all 21 requirements for the Orchestration 2.0 project on 2026-11-08. The complete [owner-approved requirements and planned acceptance evidence](docs/orchestration-2.0-requirements.md) are published with this repository. Owner acceptance defines the target scope only; implementation state remains pending verification, and this link does not claim that the current adapter satisfies the contract.
+
 ## Current implementation
 
 The initial Phase 2 foundation provides a versioned task contract, in-memory plan
