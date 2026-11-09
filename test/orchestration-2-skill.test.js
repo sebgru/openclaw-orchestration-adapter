@@ -60,18 +60,24 @@ test("restrictions are prompt-only and unexpected descendants are detected", () 
   assert.match(skill, /without independent verification/);
 });
 
-test("model confirmation fails closed on worker and receipt, with honest disclosure", () => {
+test("model/provider confirmation fails closed, while an omitted applied timeout stays unconfirmed", () => {
   assert.ok(skill.includes("[CUE:WORKER_MODEL_CONFIRM]"));
   assert.match(skill, /before any substantive analysis/);
   assert.match(skill, /runtime model identity matches the exact approved model/);
   assert.ok(skill.includes("[CUE:RECEIPT_FAIL_CLOSED]"));
-  for (const f of ["resolvedModel", "resolvedProvider", "runId", "timeout"]) {
+  for (const f of ["resolvedModel", "resolvedProvider", "runId"]) {
     assert.ok(skill.includes(f), `receipt field ${f}`);
   }
-  assert.match(skill, /absent, unconfirmable, or mismatched/);
-  assert.match(skill, /cancel via `subagents` if a `runId` is available/);
+  assert.match(skill, /missing, unconfirmable, or mismatched value blocks the attempt/);
+  assert.match(skill, /cancel via `subagents` when possible/);
   assert.match(skill, /reject all output/);
   assert.match(skill, /partial side effects/);
+  assert.ok(skill.includes("[CUE:TIMEOUT_UNCONFIRMED]"));
+  assert.match(skill, /Preserve the requested timeout from the brief/);
+  assert.match(skill, /If it does not echo an applied timeout, record `applied_timeout=unconfirmed`/);
+  assert.match(skill, /this gap alone does not invalidate an otherwise valid worker or model\/provider receipt/);
+  assert.match(skill, /a mismatch blocks the attempt/);
+  assert.match(skill, /Never claim the requested timeout was receipt-confirmed as applied/);
   assert.ok(skill.includes("[CUE:GATE_DISCLOSURE]"));
   assert.match(skill, /starts the child immediately/);
   assert.match(skill, /not a host-held pre-analysis gate/);
