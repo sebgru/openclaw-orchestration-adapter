@@ -52,12 +52,12 @@ Sebastian explicitly accepted all 21 requirements listed above on 2026-11-08. Th
 
 ## Traceability to project plan
 
-| Requirement group | Plan coverage |
-|---|---|
-| CORE, COORD | Phases 1 and 5 |
-| STATE | Phase 2 and Phase 5 |
-| OWNER | Phases 0, 3, and 6 |
-| VIS | Phase 4 |
-| DECISION | Phase 1.5 |
-| ACCEPT | Phase 5 |
-| ROLLOUT | Phase 6 |
+| Requirement group | Plan coverage       |
+| ----------------- | ------------------- |
+| CORE, COORD       | Phases 1 and 5      |
+| STATE             | Phase 2 and Phase 5 |
+| OWNER             | Phases 0, 3, and 6  |
+| VIS               | Phase 4             |
+| DECISION          | Phase 1.5           |
+| ACCEPT            | Phase 5             |
+| ROLLOUT           | Phase 6             |
