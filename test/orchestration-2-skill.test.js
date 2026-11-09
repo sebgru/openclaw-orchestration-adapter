@@ -40,3 +40,54 @@ test("skill orders dashboard sync before completion and stops at human gates", (
   assert.match(skill, /PR review\/merge/);
   assert.match(skill, /Gateway restart/);
 });
+
+test("standard spawn claims normal policy and requires tool evidence in the brief", () => {
+  assert.doesNotMatch(skill, /full ordinary tool set/);
+  assert.match(skill, /standard host sub-agent tool restrictions/);
+  assert.match(skill, /`required_tools` and `inherited_tool_evidence`/);
+  assert.match(skill, /parent's tool catalog alone does not prove/);
+  assert.ok(skill.includes("[CUE:TOOL_EVIDENCE]"));
+});
+
+test("restrictions are prompt-only and unexpected descendants are detected", () => {
+  assert.ok(skill.includes("[CUE:PROMPT_ONLY]"));
+  assert.match(skill, /no-recursion restrictions are prompt-only/);
+  assert.match(skill, /only the run timeout and normal host policy are host-enforced/);
+  assert.ok(skill.includes("[CUE:DESCENDANT_DETECT]"));
+  assert.match(skill, /`subagents` list/);
+  assert.match(skill, /`subagent_used`/);
+  assert.match(skill, /Cancel any unapproved descendant/);
+  assert.match(skill, /without independent verification/);
+});
+
+test("model confirmation fails closed on worker and receipt, with honest disclosure", () => {
+  assert.ok(skill.includes("[CUE:WORKER_MODEL_CONFIRM]"));
+  assert.match(skill, /before any substantive analysis/);
+  assert.match(skill, /runtime model identity matches the exact approved model/);
+  assert.ok(skill.includes("[CUE:RECEIPT_FAIL_CLOSED]"));
+  for (const f of ["resolvedModel", "resolvedProvider", "runId", "timeout"]) {
+    assert.ok(skill.includes(f), `receipt field ${f}`);
+  }
+  assert.match(skill, /absent, unconfirmable, or mismatched/);
+  assert.match(skill, /cancel via `subagents` if a `runId` is available/);
+  assert.match(skill, /reject all output/);
+  assert.match(skill, /partial side effects/);
+  assert.ok(skill.includes("[CUE:GATE_DISCLOSURE]"));
+  assert.match(skill, /starts the child immediately/);
+  assert.match(skill, /not a host-held pre-analysis gate/);
+});
+
+test("owner decision gate requires exact ask, reviewable options, and continued independent work", () => {
+  assert.ok(skill.includes("[CUE:OWNER_DECISION_GATE]"));
+  assert.match(skill, /material unresolved owner choice or a protected action/);
+  assert.match(skill, /exact decision or action/);
+  assert.match(skill, /reviewable options or an artifact/);
+  assert.match(skill, /continue independent authorized work/);
+});
+
+test("owner summaries include receipt-confirmed route, remaining state, next action, decision", () => {
+  assert.ok(skill.includes("[CUE:SUMMARY_ROUTE]"));
+  assert.match(skill, /receipt-confirmed actual worker model\/route/);
+  assert.match(skill, /current remaining state/);
+  assert.match(skill, /next action, and any owner decision/);
+});
