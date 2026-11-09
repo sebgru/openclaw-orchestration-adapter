@@ -186,6 +186,7 @@ test("packaging metadata ships the manifest and any declared skill directory", (
     "skills/verification-before-completion",
     "skills/multi-agent-coordinator",
     "skills/subagent-driven-development",
+    "skills/orchestration-2.0",
   ];
   assert.deepEqual(manifest.skills, expectedSkills);
   for (const dir of manifest.skills) {

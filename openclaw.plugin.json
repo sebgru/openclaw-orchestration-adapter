@@ -17,7 +17,8 @@
     "skills/long-running-task-management",
     "skills/verification-before-completion",
     "skills/multi-agent-coordinator",
-    "skills/subagent-driven-development"
+    "skills/subagent-driven-development",
+    "skills/orchestration-2.0"
   ],
   "activation": {
     "onStartup": false
