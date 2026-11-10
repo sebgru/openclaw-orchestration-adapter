@@ -35,6 +35,14 @@ test("skill uses sessions_spawn and treats adapter dispatch as an exception", ()
   assert.match(skill, /Do not use `orchestration_dispatch`/);
 });
 
+test("dependent chains use private parent completion turns for no-nudge continuation", () => {
+  assert.ok(skill.includes("[CUE:PRIVATE_PARENT_CONTINUATION]"));
+  assert.match(skill, /completionTarget: "parent"/);
+  assert.match(skill, /call `sessions_yield`/);
+  assert.match(skill, /does not itself perform verification or scheduling/);
+  assert.match(skill, /docs\/completion-driven-continuation\.md/);
+});
+
 test("skill orders dashboard sync before completion and stops at human gates", () => {
   assert.match(skill, /only then report the task complete/);
   assert.match(skill, /PR review\/merge/);
