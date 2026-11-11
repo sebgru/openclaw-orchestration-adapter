@@ -1,0 +1,29 @@
+{
+  "contract": "phase51-completion-chain",
+  "spawn": {
+    "tool": "sessions_spawn",
+    "kind": "standard",
+    "completionTarget": "parent"
+  },
+  "parent": {
+    "yieldAfterSpawn": true,
+    "yieldTool": "sessions_yield",
+    "ownerNudges": 0,
+    "advanceOnlyWhenVerified": true
+  },
+  "tasks": [
+    { "id": "T1", "role": "implement", "dependsOn": [] },
+    { "id": "T2", "role": "verify-test", "dependsOn": ["T1"] },
+    { "id": "T3", "role": "independent-review", "dependsOn": ["T2"] }
+  ],
+  "advance": {
+    "requiredState": "verified"
+  },
+  "failure": {
+    "status": "blocked"
+  },
+  "final": {
+    "stopAt": "human-pr-review",
+    "autoMerge": false
+  }
+}
