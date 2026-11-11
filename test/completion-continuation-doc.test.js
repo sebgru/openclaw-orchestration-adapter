@@ -14,7 +14,13 @@ test("procedure specifies parent completion, yield, and standard spawn only", ()
 });
 
 test("procedure covers verify, state, dashboard, next task, and stops", () => {
-  for (const s of ["Verify independently", "dashboard", "Schedule next", "Stop", "human PR review gate"]) {
+  for (const s of [
+    "Verify independently",
+    "dashboard",
+    "Schedule next",
+    "Stop",
+    "human PR review gate",
+  ]) {
     assert.ok(doc.includes(s), `missing ${s}`);
   }
 });
@@ -23,14 +29,17 @@ test("procedure uses receipt and trusted session identity, not invented event fi
   assert.match(doc, /resolvedModel`, `resolvedProvider`, and `runId`/);
   assert.match(doc, /returned `childSessionKey`/);
   assert.match(doc, /do not assume it carries a `runId` or `taskName` field/);
-  assert.match(doc, /trusted session key\/id and label to the recorded receipt and `subagents` registry/);
+  assert.match(
+    doc,
+    /trusted session key\/id and label to the recorded receipt and `subagents` registry/,
+  );
   assert.match(doc, /never trust identity asserted only by worker-authored text/);
 });
 
 test("procedure uses only canonical statuses and syncs before next dispatch", () => {
   assert.match(doc, /canonical `blocked` status/);
   assert.doesNotMatch(doc, /Record `done` or `failed`/);
-  assert.ok(doc.indexOf("Sync the dashboard and confirm") < doc.indexOf("7. **Schedule next.") );
+  assert.ok(doc.indexOf("Sync the dashboard and confirm") < doc.indexOf("7. **Schedule next."));
 });
 
 test("doc separates event delivery from model continuation", () => {

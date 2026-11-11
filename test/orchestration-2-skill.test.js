@@ -20,9 +20,19 @@ test("skill frontmatter names the skill and has a description", () => {
 
 test("skill carries every machine-testable acceptance cue", () => {
   for (const cue of [
-    "STANDARD_SPAWN", "ADAPTER_EXCEPTION", "TASK_STATE", "BRIEF", "ROUTE_RECORD",
-    "LIFECYCLE", "VERIFY", "AUTO_PROGRESS", "DASHBOARD_SYNC", "OWNER_SUMMARY",
-    "HUMAN_GATE", "CENTRAL_DISPATCH", "DENIAL_VISIBLE",
+    "STANDARD_SPAWN",
+    "ADAPTER_EXCEPTION",
+    "TASK_STATE",
+    "BRIEF",
+    "ROUTE_RECORD",
+    "LIFECYCLE",
+    "VERIFY",
+    "AUTO_PROGRESS",
+    "DASHBOARD_SYNC",
+    "OWNER_SUMMARY",
+    "HUMAN_GATE",
+    "CENTRAL_DISPATCH",
+    "DENIAL_VISIBLE",
   ]) {
     assert.ok(skill.includes(`[CUE:${cue}]`), `missing cue ${cue}`);
   }
@@ -82,8 +92,14 @@ test("model/provider confirmation fails closed, while an omitted applied timeout
   assert.match(skill, /partial side effects/);
   assert.ok(skill.includes("[CUE:TIMEOUT_UNCONFIRMED]"));
   assert.match(skill, /Preserve the requested timeout from the brief/);
-  assert.match(skill, /If it does not echo an applied timeout, record `applied_timeout=unconfirmed`/);
-  assert.match(skill, /this gap alone does not invalidate an otherwise valid worker or model\/provider receipt/);
+  assert.match(
+    skill,
+    /If it does not echo an applied timeout, record `applied_timeout=unconfirmed`/,
+  );
+  assert.match(
+    skill,
+    /this gap alone does not invalidate an otherwise valid worker or model\/provider receipt/,
+  );
   assert.match(skill, /a mismatch blocks the attempt/);
   assert.match(skill, /Never claim the requested timeout was receipt-confirmed as applied/);
   assert.ok(skill.includes("[CUE:GATE_DISCLOSURE]"));

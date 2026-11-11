@@ -26,11 +26,11 @@ Not guaranteed by OpenClaw: that the parent verifies, updates state, or spawns t
 
 ## Chain for Phase 5.1
 
-| Task | Worker | Gate to proceed |
-|------|--------|-----------------|
-| T1 implement | one implementer | parent verifies the diff and scope |
-| T2 verify/test | fresh worker | parent re-runs tests; passing evidence |
-| T3 independent review | fresh worker, filtered brief (no author reasoning) | approved review |
+| Task                  | Worker                                             | Gate to proceed                        |
+| --------------------- | -------------------------------------------------- | -------------------------------------- |
+| T1 implement          | one implementer                                    | parent verifies the diff and scope     |
+| T2 verify/test        | fresh worker                                       | parent re-runs tests; passing evidence |
+| T3 independent review | fresh worker, filtered brief (no author reasoning) | approved review                        |
 
 After T3 is verified and the dashboard is synced, stop at the **human PR review gate** and present the artifact. Push, merge, config change, and Gateway restart remain owner-gated and are never implied. The resulting parent final follows the conversation's normal reply-delivery rules; private child input does not make the parent final private.
 
