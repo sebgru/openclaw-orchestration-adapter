@@ -39,3 +39,16 @@ After T3 is verified and the dashboard is synced, stop at the **human PR review 
 - Bounded retries (infra failures only); no loops on repeated failure (see loop-circuit-breaker).
 - Each cycle leaves an auditable trail: task state transitions, run ids, verification evidence, dashboard confirmation.
 - Parent reset between yield and resume breaks the chain; resume from canonical state with an explicit owner request.
+
+## Durable task ledger (recovery and duplicate prevention)
+
+`createTaskLedger` (`src/task-ledger.js`) is an optional coordinator-side record for the procedure above. It does not spawn, wait, or call any host API; the coordinator still uses standard `sessions_spawn`/`sessions_yield`. It stores an append-only, hash-chained JSONL file at an absolute path chosen by the caller and replays it to derive task state.
+
+- **Reserve before spawn.** `reserveDispatch(taskId)` durably records the attempt before `sessions_spawn` is called, and refuses a second dispatch while an attempt is reserved, running, review-ready, or verified. A crash between reservation and receipt leaves `admission-unknown`; `recover()` marks it blocked and never re-dispatches. Check `subagents` for a matching run, then call `resolveBlocker` with `sideEffectsChecked: true` before any retry.
+- **Receipt gate.** `recordReceipt` stores requested versus receipt-confirmed model and provider, `runId`, and `childSessionKey`; an applied timeout not echoed by the receipt stays `unconfirmed`. Missing fields, a mismatch, or an unavailable exact model block the attempt.
+- **Completion needs a trusted envelope.** `recordCompletion` matches on the recorded `childSessionKey`. Unmatched and duplicate completions are recorded as notes and ignored. `recordQueued` shows a queued delivery but never advances the task.
+- **No dashboard bypass.** A task becomes `done` only through `recordDashboardSync` after a passing verification with evidence references, and only when a publisher tool was evidenced by `recordCapability`. If publishing fails, `recordPublisherFailure` leaves it visibly blocked and dependents stay waiting.
+- **Evidence provenance.** Each receipt carries `evidenceSource` (`standard-spawn` or `adapter-fake-host`). `assessAcceptance` counts only `standard-spawn` evidence for ORCH-ACCEPT-01/02 and lists fake-host tasks separately.
+- **Visibility.** `deriveStatusView`/`renderStatusMarkdown` show per-task status, unmet dependencies, upstream blockers, blocker code with evidence source, requested versus actual model, and next action.
+
+Limits: the ledger is advisory state kept by the coordinator. It cannot cancel a running worker, prove a host-side effect did or did not happen, make a queued message complete, or add a host capability. The lock file is not stale-recovered; a crashed writer's lock needs manual inspection.
