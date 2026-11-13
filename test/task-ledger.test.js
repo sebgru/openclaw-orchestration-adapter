@@ -918,10 +918,23 @@ test("model receipt matching is exact unless the caller configured a provider al
     [{ providerAliases: { anthropic: ["claude-cli"] } }, { resolvedProvider: "claude-cli" }, null],
     [
       { providerAliases: { anthropic: ["claude-cli"] } },
+      { resolvedProvider: "claude-cli", resolvedModel: "anthropic/claude-sonnet-5-5" },
+      null,
+    ],
+    [
+      { providerAliases: { anthropic: ["claude-cli"] } },
+      { resolvedProvider: "claude-cli", resolvedModel: "other/claude-sonnet-5-5" },
+      "model-mismatch",
+    ],
+    [
+      { providerAliases: { anthropic: ["claude-cli"] } },
       { resolvedProvider: "other" },
       "model-mismatch",
     ],
     [{}, {}, null],
+    [{}, { resolvedModel: "anthropic/claude-sonnet-5-5" }, null],
+    [{}, { resolvedModel: "other/claude-sonnet-5-5" }, "model-mismatch"],
+    [{}, { resolvedModel: "anthropic/claude-opus-5-5" }, "model-mismatch"],
   ];
   cases.forEach(([opts, extra, code], i) => {
     const { ledger } = fresh(opts);

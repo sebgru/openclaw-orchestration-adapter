@@ -713,12 +713,14 @@ export function createTaskLedger({
    */
   function matchModel(requested, r, aliasesByProvider) {
     if (`${r.resolvedProvider}/${r.resolvedModel}` === requested) return "exact";
+    if (r.resolvedModel === requested && requested.startsWith(`${r.resolvedProvider}/`))
+      return "exact";
     const i = requested.indexOf("/");
     if (i < 0) return r.resolvedModel === requested ? "exact" : null;
     const [reqProvider, reqModel] = [requested.slice(0, i), requested.slice(i + 1)];
     const aliases = aliasesByProvider?.[reqProvider];
     if (
-      r.resolvedModel === reqModel &&
+      (r.resolvedModel === reqModel || r.resolvedModel === requested) &&
       Array.isArray(aliases) &&
       aliases.includes(r.resolvedProvider)
     )
