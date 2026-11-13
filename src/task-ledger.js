@@ -628,23 +628,26 @@ export function createTaskLedger({
 
   /** Release only the lock this writer created; a replaced foreign lock is left alone. */
   function releaseLock({ fd, token, force = false }) {
+    let closeError;
     try {
       closeSync(fd);
-    } finally {
-      let own = force;
-      if (!own)
-        try {
-          own = JSON.parse(readFileSync(lockFile, "utf8"))?.token === token;
-        } catch {
-          own = false;
-        }
-      if (own)
-        try {
-          unlinkSync(lockFile);
-        } catch (e) {
-          if (e.code !== "ENOENT") throw e;
-        }
+    } catch (e) {
+      closeError = e;
     }
+    let own = force;
+    if (!own)
+      try {
+        own = JSON.parse(readFileSync(lockFile, "utf8"))?.token === token;
+      } catch {
+        own = false;
+      }
+    if (own)
+      try {
+        unlinkSync(lockFile);
+      } catch (e) {
+        if (e.code !== "ENOENT") throw e;
+      }
+    if (closeError) throw closeError;
   }
 
   function inspectLock() {

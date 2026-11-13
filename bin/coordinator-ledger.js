@@ -2,6 +2,7 @@
 // Local coordinator bridge: JSON request on stdin, JSON response on stdout.
 // This bridge does not authenticate owner decisions or interact with host tools.
 import { readFileSync } from "node:fs";
+import process from "node:process";
 import { createTaskLedger } from "../src/task-ledger.js";
 
 const methods = new Set([

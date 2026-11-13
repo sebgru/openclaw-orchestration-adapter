@@ -98,17 +98,41 @@ test("review rejection remains blocked through bridge until trusted owner resolu
 test("bridge defaults an omitted reviewer kind to owner-gated even with a review child", () => {
   const file = path.join(mkdtempSync(path.join(tmpdir(), "oa2-cli-kind-")), "ledger.jsonl");
   const ledger = createTaskLedger({ file });
-  const def = (id, role) => ({ id, role, goal: "x", successCriteria: ["x"], requestedModel: "p/m", timeoutMs: 1000 });
+  const def = (id, role) => ({
+    id,
+    role,
+    goal: "x",
+    successCriteria: ["x"],
+    requestedModel: "p/m",
+    timeoutMs: 1000,
+  });
   ledger.declarePlan({ planId: "p", tasks: [def("R", "review"), def("T", "implement")] });
   ledger.recordCapability({ tools: ["sessions_spawn", "sessions_yield", "subagents"] });
   for (const id of ["R", "T"]) {
     ledger.reserveDispatch(id);
-    ledger.recordReceipt(id, { evidenceSource: "standard-spawn", runId: `run-${id}`, childSessionKey: `child-${id}`, resolvedProvider: "p", resolvedModel: "m" });
+    ledger.recordReceipt(id, {
+      evidenceSource: "standard-spawn",
+      runId: `run-${id}`,
+      childSessionKey: `child-${id}`,
+      resolvedProvider: "p",
+      resolvedModel: "m",
+    });
     ledger.recordCompletion({ childSessionKey: `child-${id}`, outcome: "ok" });
   }
-  const call = (method, args) => spawnSync(process.execPath, ["bin/coordinator-ledger.js"], { input: JSON.stringify({ file, method, args }), encoding: "utf8" });
-  assert.equal(call("recordVerification", ["T", { verifier: "child-R", verdict: "reject", findings: "x" }]).status, 0);
+  const call = (method, args) =>
+    spawnSync(process.execPath, ["bin/coordinator-ledger.js"], {
+      input: JSON.stringify({ file, method, args }),
+      encoding: "utf8",
+    });
+  assert.equal(
+    call("recordVerification", ["T", { verifier: "child-R", verdict: "reject", findings: "x" }])
+      .status,
+    0,
+  );
   assert.equal(ledger.state().tasks.get("T").blocker.ownerRequired, true);
-  const result = call("resolveBlocker", ["T", { reason: "fix", authorizedBy: "owner", sideEffectsChecked: true, correctionScope: "x" }]);
+  const result = call("resolveBlocker", [
+    "T",
+    { reason: "fix", authorizedBy: "owner", sideEffectsChecked: true, correctionScope: "x" },
+  ]);
   assert.equal(JSON.parse(result.stdout).code, "owners-not-configured");
 });
