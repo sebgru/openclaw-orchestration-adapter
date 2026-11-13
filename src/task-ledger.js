@@ -179,6 +179,7 @@ export function reduceLedger(events) {
           outcome: "reserved",
           blockerCodes: [],
           trigger: data.trigger ?? null,
+          reviewBinding: data.reviewBinding ?? null,
           abandoned: null,
         });
         if (data.trigger?.type === "owner-nudge")
@@ -223,7 +224,8 @@ export function reduceLedger(events) {
           verifier: data.verifier,
           evidenceRefs: data.evidenceRefs,
           findings: data.findings ?? null,
-          reviewProvenance: data.reviewProvenance ?? "unverified",
+          reviewProvenance: data.reviewBinding ? data.reviewProvenance : "unverified",
+          reviewBinding: data.reviewBinding ?? null,
           at: ts,
         };
         if (data.verdict === "pass") {
@@ -235,7 +237,7 @@ export function reduceLedger(events) {
             "review-rejected",
             data.findings ?? "verification rejected",
             att.evidenceSource,
-            { ownerRequired: data.reviewProvenance !== "independent-agent" },
+            { ownerRequired: !data.reviewBinding || data.reviewProvenance !== "independent-agent" },
           );
         break;
       case "dashboard_synced":
@@ -710,7 +712,7 @@ export function createTaskLedger({
     },
 
     /** Durably reserve an attempt BEFORE calling sessions_spawn; returns the attempt number. */
-    reserveDispatch(taskId, { trigger, label } = {}) {
+    reserveDispatch(taskId, { trigger, label, reviewBinding } = {}) {
       let attempt;
       commit("dispatch_reserved", (s) => {
         const t = need(s, taskId);
@@ -760,10 +762,23 @@ export function createTaskLedger({
             };
           } else fail("invalid dispatch trigger", "invalid-trigger");
         }
+        let binding = null;
+        if (reviewBinding !== undefined) {
+          if (t.role !== "review" || !reviewBinding || !nonEmpty(reviewBinding.taskId))
+            fail("review binding requires a review task and target", "invalid-review-binding");
+          const target = need(s, reviewBinding.taskId);
+          const targetAttempt = openAttempt(target);
+          if (target.id === taskId || target.status !== "review-ready" ||
+              !targetAttempt || !nonEmpty(targetAttempt.completion?.digest) ||
+              reviewBinding.attempt !== targetAttempt.n ||
+              reviewBinding.digest !== targetAttempt.completion.digest)
+            fail("review binding must match the current completed target attempt and artifact digest", "invalid-review-binding");
+          binding = { taskId: target.id, attempt: targetAttempt.n, digest: targetAttempt.completion.digest };
+        }
         attempt = t.attempt + 1;
         if (label !== undefined && !nonEmpty(label))
           fail("label must be non-empty", "invalid-dispatch");
-        return { taskId, attempt, trigger: recorded, label: label ?? null };
+        return { taskId, attempt, trigger: recorded, label: label ?? null, reviewBinding: binding };
       });
       return attempt;
     },
@@ -908,7 +923,12 @@ export function createTaskLedger({
             o.attempts.some(
               (x) =>
                 x.completion?.outcome === "ok" &&
-                !x.abandoned &&
+                !x.abandoned && x.blockerCodes.length === 0 &&
+                ["exact", "provider-alias"].includes(x.receipt?.modelMatch) &&
+                x.reviewBinding?.taskId === taskId &&
+                x.reviewBinding?.attempt === a.n &&
+                nonEmpty(a.completion?.digest) &&
+                x.reviewBinding?.digest === a.completion.digest &&
                 [x.receipt?.childSessionKey, x.receipt?.runId].includes(verifier),
             ),
         );
@@ -916,6 +936,10 @@ export function createTaskLedger({
           reviewerKind === "agent" && independent && !owners.includes(verifier)
             ? "independent-agent"
             : "unverified";
+        if (verdict === "pass" && need(s, taskId).attempts.some(
+          (prior) => prior.n < a.n && prior.verification?.verdict === "reject",
+        ) && reviewProvenance !== "independent-agent")
+          fail("a corrected attempt requires a fresh bound independent review", "rereview-required");
         return {
           taskId,
           verdict,
@@ -923,6 +947,7 @@ export function createTaskLedger({
           evidenceRefs: evidenceRefs ?? [],
           findings,
           reviewProvenance,
+          reviewBinding: independent ? { taskId, attempt: a.n, digest: a.completion.digest } : null,
         };
       });
     },
