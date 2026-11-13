@@ -725,8 +725,6 @@ export function createTaskLedger({
           );
         if (t.status !== "pending")
           fail(`${taskId} is ${t.status}; duplicate dispatch refused`, "duplicate-dispatch");
-        const unmet = t.dependencies.filter((d) => s.tasks.get(d).status !== "done");
-        if (unmet.length) fail(`${taskId} waits on ${unmet.join(", ")}`, "dependency-unmet");
         if (t.attempt >= t.maxAttempts)
           fail(`${taskId} exhausted its ${t.maxAttempts} attempts`, "attempts-exhausted");
         if (t.attempt > 0 && !t.blocker?.resolved)
@@ -768,13 +766,30 @@ export function createTaskLedger({
             fail("review binding requires a review task and target", "invalid-review-binding");
           const target = need(s, reviewBinding.taskId);
           const targetAttempt = openAttempt(target);
-          if (target.id === taskId || target.status !== "review-ready" ||
-              !targetAttempt || !nonEmpty(targetAttempt.completion?.digest) ||
-              reviewBinding.attempt !== targetAttempt.n ||
-              reviewBinding.digest !== targetAttempt.completion.digest)
-            fail("review binding must match the current completed target attempt and artifact digest", "invalid-review-binding");
-          binding = { taskId: target.id, attempt: targetAttempt.n, digest: targetAttempt.completion.digest };
+          if (
+            target.id === taskId ||
+            target.status !== "review-ready" ||
+            !targetAttempt ||
+            !nonEmpty(targetAttempt.completion?.digest) ||
+            reviewBinding.attempt !== targetAttempt.n ||
+            reviewBinding.digest !== targetAttempt.completion.digest
+          )
+            fail(
+              "review binding must match the current completed target attempt and artifact digest",
+              "invalid-review-binding",
+            );
+          binding = {
+            taskId: target.id,
+            attempt: targetAttempt.n,
+            digest: targetAttempt.completion.digest,
+          };
         }
+        // A bound review consumes the target's completed artifact before it can
+        // become done. All other dependencies retain the normal done gate.
+        const unmet = t.dependencies.filter(
+          (d) => s.tasks.get(d).status !== "done" && d !== binding?.taskId,
+        );
+        if (unmet.length) fail(`${taskId} waits on ${unmet.join(", ")}`, "dependency-unmet");
         attempt = t.attempt + 1;
         if (label !== undefined && !nonEmpty(label))
           fail("label must be non-empty", "invalid-dispatch");
@@ -916,30 +931,49 @@ export function createTaskLedger({
           }
         };
         collect(taskId);
-        const independent = [...s.tasks.values()].some(
-          (o) =>
-            o.id !== taskId && o.kind === "worker" && o.role === "review" &&
-            !ancestors.has(o.id) &&
-            o.attempts.some(
-              (x) =>
-                x.completion?.outcome === "ok" &&
-                !x.abandoned && x.blockerCodes.length === 0 &&
-                ["exact", "provider-alias"].includes(x.receipt?.modelMatch) &&
-                x.reviewBinding?.taskId === taskId &&
-                x.reviewBinding?.attempt === a.n &&
-                nonEmpty(a.completion?.digest) &&
-                x.reviewBinding?.digest === a.completion.digest &&
-                [x.receipt?.childSessionKey, x.receipt?.runId].includes(verifier),
-            ),
+        // Identity strings share a namespace: a run ID can collide with another
+        // attempt's run ID or child key. Never infer provenance from ambiguity.
+        const matches = [...s.tasks.values()].flatMap((task) =>
+          task.attempts.filter((attempt) =>
+            [attempt.receipt?.childSessionKey, attempt.receipt?.runId].includes(verifier),
+          ),
         );
+        const independent =
+          matches.length === 1 &&
+          [...s.tasks.values()].some(
+            (o) =>
+              o.id !== taskId &&
+              o.kind === "worker" &&
+              o.role === "review" &&
+              !ancestors.has(o.id) &&
+              o.attempts.some(
+                (x) =>
+                  x.completion?.outcome === "ok" &&
+                  !x.abandoned &&
+                  x.blockerCodes.length === 0 &&
+                  ["exact", "provider-alias"].includes(x.receipt?.modelMatch) &&
+                  x.reviewBinding?.taskId === taskId &&
+                  x.reviewBinding?.attempt === a.n &&
+                  nonEmpty(a.completion?.digest) &&
+                  x.reviewBinding?.digest === a.completion.digest &&
+                  [x.receipt?.childSessionKey, x.receipt?.runId].includes(verifier),
+              ),
+          );
         const reviewProvenance =
           reviewerKind === "agent" && independent && !owners.includes(verifier)
             ? "independent-agent"
             : "unverified";
-        if (verdict === "pass" && need(s, taskId).attempts.some(
-          (prior) => prior.n < a.n && prior.verification?.verdict === "reject",
-        ) && reviewProvenance !== "independent-agent")
-          fail("a corrected attempt requires a fresh bound independent review", "rereview-required");
+        if (
+          verdict === "pass" &&
+          need(s, taskId).attempts.some(
+            (prior) => prior.n < a.n && prior.verification?.verdict === "reject",
+          ) &&
+          reviewProvenance !== "independent-agent"
+        )
+          fail(
+            "a corrected attempt requires a fresh bound independent review",
+            "rereview-required",
+          );
         return {
           taskId,
           verdict,

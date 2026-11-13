@@ -1064,9 +1064,15 @@ function rejectedWith(ledger, verifier, extra = {}) {
   runToDone(ledger, "T1", 1);
   ledger.reserveDispatch("T2");
   ledger.recordReceipt("T2", receipt(2));
-  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:2", outcome: "ok", digest: "artifact-2" });
+  ledger.recordCompletion({
+    childSessionKey: "agent:main:subagent:2",
+    outcome: "ok",
+    digest: "artifact-2",
+  });
   ledger.addTask(task("Reviewer", { role: "review" }));
-  ledger.reserveDispatch("Reviewer", { reviewBinding: { taskId: "T2", attempt: 1, digest: "artifact-2" } });
+  ledger.reserveDispatch("Reviewer", {
+    reviewBinding: { taskId: "T2", attempt: 1, digest: "artifact-2" },
+  });
   ledger.recordReceipt("Reviewer", receipt(9));
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:9", outcome: "ok" });
   ledger.recordVerification("T2", { verifier, verdict: "reject", findings: "defect", ...extra });
@@ -1136,9 +1142,15 @@ test("agent-review correction retries stay bounded by maxAttempts", () => {
   ledger.addTask(task("R", { maxAttempts: 1 }));
   ledger.reserveDispatch("R");
   ledger.recordReceipt("R", receipt(5));
-  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:5", outcome: "ok", digest: "artifact-r" });
+  ledger.recordCompletion({
+    childSessionKey: "agent:main:subagent:5",
+    outcome: "ok",
+    digest: "artifact-r",
+  });
   ledger.addTask(task("Reviewer", { role: "review" }));
-  ledger.reserveDispatch("Reviewer", { reviewBinding: { taskId: "R", attempt: 1, digest: "artifact-r" } });
+  ledger.reserveDispatch("Reviewer", {
+    reviewBinding: { taskId: "R", attempt: 1, digest: "artifact-r" },
+  });
   ledger.recordReceipt("Reviewer", receipt(9));
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:9", outcome: "ok" });
   ledger.recordVerification("R", {
@@ -1161,14 +1173,33 @@ test("reviewer ancestry and unsuccessful reviewer attempts are owner-gated", () 
     const { ledger } = fresh();
     ledger.addTask(task("Reviewer", { role: "review" }));
     ledger.reserveDispatch("Reviewer");
-    ledger.recordReceipt("Reviewer", receipt(9, mode === "abandoned" ? { resolvedModel: "wrong" } : {}));
+    ledger.recordReceipt(
+      "Reviewer",
+      receipt(9, mode === "abandoned" ? { resolvedModel: "wrong" } : {}),
+    );
     if (mode === "abandoned") {
-      ledger.resolveBlocker("Reviewer", { reason: "stop", authorizedBy: "c", sideEffectsChecked: true, childStatus: "cancelled", childEvidence: "subagents" });
-      throwsCode(() => ledger.recordCompletion({ childSessionKey: "agent:main:subagent:9", outcome: "ok" }), "unmatched-completion");
+      ledger.resolveBlocker("Reviewer", {
+        reason: "stop",
+        authorizedBy: "c",
+        sideEffectsChecked: true,
+        childStatus: "cancelled",
+        childEvidence: "subagents",
+      });
+      throwsCode(
+        () => ledger.recordCompletion({ childSessionKey: "agent:main:subagent:9", outcome: "ok" }),
+        "unmatched-completion",
+      );
     } else {
-      ledger.recordCompletion({ childSessionKey: "agent:main:subagent:9", outcome: mode === "error" ? "error" : "ok" });
+      ledger.recordCompletion({
+        childSessionKey: "agent:main:subagent:9",
+        outcome: mode === "error" ? "error" : "ok",
+      });
       if (mode === "ancestor") {
-        ledger.recordVerification("Reviewer", { verifier: "v", verdict: "pass", evidenceRefs: ["e"] });
+        ledger.recordVerification("Reviewer", {
+          verifier: "v",
+          verdict: "pass",
+          evidenceRefs: ["e"],
+        });
         ledger.recordDashboardSync("Reviewer", "d");
       }
     }
@@ -1176,38 +1207,84 @@ test("reviewer ancestry and unsuccessful reviewer attempts are owner-gated", () 
     ledger.reserveDispatch("Target");
     ledger.recordReceipt("Target", receipt(10));
     ledger.recordCompletion({ childSessionKey: "agent:main:subagent:10", outcome: "ok" });
-    throwsCode(() => ledger.recordVerification("Target", { verifier: "agent:main:subagent:10", reviewerKind: "agent", verdict: "reject", findings: "x" }), "invalid-verification");
-    ledger.recordVerification("Target", { verifier: "agent:main:subagent:9", reviewerKind: "agent", verdict: "reject", findings: "x" });
+    throwsCode(
+      () =>
+        ledger.recordVerification("Target", {
+          verifier: "agent:main:subagent:10",
+          reviewerKind: "agent",
+          verdict: "reject",
+          findings: "x",
+        }),
+      "invalid-verification",
+    );
+    ledger.recordVerification("Target", {
+      verifier: "agent:main:subagent:9",
+      reviewerKind: "agent",
+      verdict: "reject",
+      findings: "x",
+    });
     assert.equal(ledger.state().tasks.get("Target").blocker.ownerRequired, true, mode);
   }
 });
 
-
 test("legacy rejection replay without provenance requires an owner", () => {
   const events = [
-    { type: "plan_declared", data: { planId: "p", tasks: [{ ...task("T"), kind: "worker", dependencies: [] }] } },
+    {
+      type: "plan_declared",
+      data: { planId: "p", tasks: [{ ...task("T"), kind: "worker", dependencies: [] }] },
+    },
     { type: "dispatch_reserved", data: { taskId: "T", attempt: 1 } },
-    { type: "verification_recorded", data: { taskId: "T", verdict: "reject", verifier: "v", findings: "x" } },
+    {
+      type: "verification_recorded",
+      data: { taskId: "T", verdict: "reject", verifier: "v", findings: "x" },
+    },
   ];
   const t = reduceLedger(events).tasks.get("T");
   assert.equal(t.attempts[0].verification.reviewProvenance, "unverified");
   assert.equal(t.blocker.ownerRequired, true);
 });
 
-
 test("correction cannot pass without a fresh review bound to the new attempt and artifact", () => {
   const { ledger } = fresh({ owners: [] });
   rejectedWith(ledger, "agent:main:subagent:9", { reviewerKind: "agent" });
-  ledger.resolveBlocker("T2", { reason: "fix", authorizedBy: "c", sideEffectsChecked: true, correctionScope: "fix defect" });
+  ledger.resolveBlocker("T2", {
+    reason: "fix",
+    authorizedBy: "c",
+    sideEffectsChecked: true,
+    correctionScope: "fix defect",
+  });
   ledger.reserveDispatch("T2");
   ledger.recordReceipt("T2", receipt(20));
-  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:20", outcome: "ok", digest: "artifact-new" });
-  const pass = { verifier: "agent:main:subagent:9", reviewerKind: "agent", verdict: "pass", evidenceRefs: ["review"] };
+  ledger.recordCompletion({
+    childSessionKey: "agent:main:subagent:20",
+    outcome: "ok",
+    digest: "artifact-new",
+  });
+  const pass = {
+    verifier: "agent:main:subagent:9",
+    reviewerKind: "agent",
+    verdict: "pass",
+    evidenceRefs: ["review"],
+  };
   throwsCode(() => ledger.recordVerification("T2", pass), "rereview-required");
   ledger.addTask(task("Reviewer2", { role: "review" }));
-  throwsCode(() => ledger.reserveDispatch("Reviewer2", { reviewBinding: { taskId: "T2", attempt: 1, digest: "artifact-2" } }), "invalid-review-binding");
-  throwsCode(() => ledger.reserveDispatch("Reviewer2", { reviewBinding: { taskId: "T2", attempt: 2, digest: "wrong" } }), "invalid-review-binding");
-  ledger.reserveDispatch("Reviewer2", { reviewBinding: { taskId: "T2", attempt: 2, digest: "artifact-new" } });
+  throwsCode(
+    () =>
+      ledger.reserveDispatch("Reviewer2", {
+        reviewBinding: { taskId: "T2", attempt: 1, digest: "artifact-2" },
+      }),
+    "invalid-review-binding",
+  );
+  throwsCode(
+    () =>
+      ledger.reserveDispatch("Reviewer2", {
+        reviewBinding: { taskId: "T2", attempt: 2, digest: "wrong" },
+      }),
+    "invalid-review-binding",
+  );
+  ledger.reserveDispatch("Reviewer2", {
+    reviewBinding: { taskId: "T2", attempt: 2, digest: "artifact-new" },
+  });
   ledger.recordReceipt("Reviewer2", receipt(21));
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:21", outcome: "ok" });
   ledger.recordVerification("T2", { ...pass, verifier: "agent:main:subagent:21" });
@@ -1219,29 +1296,199 @@ test("blocked reviewer receipts cannot qualify even if their children later succ
     const { ledger } = fresh();
     ledger.reserveDispatch("T1");
     ledger.recordReceipt("T1", receipt(1));
-    ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok", digest: "artifact" });
+    ledger.recordCompletion({
+      childSessionKey: "agent:main:subagent:1",
+      outcome: "ok",
+      digest: "artifact",
+    });
     ledger.addTask(task("Reviewer", { role: "review" }));
-    ledger.reserveDispatch("Reviewer", { reviewBinding: { taskId: "T1", attempt: 1, digest: "artifact" } });
+    ledger.reserveDispatch("Reviewer", {
+      reviewBinding: { taskId: "T1", attempt: 1, digest: "artifact" },
+    });
     ledger.recordReceipt("Reviewer", receipt(9, bad));
     ledger.recordCompletion({ childSessionKey: "agent:main:subagent:9", outcome: "ok" });
-    ledger.recordVerification("T1", { verifier: "agent:main:subagent:9", reviewerKind: "agent", verdict: "reject", findings: "defect" });
+    ledger.recordVerification("T1", {
+      verifier: "agent:main:subagent:9",
+      reviewerKind: "agent",
+      verdict: "reject",
+      findings: "defect",
+    });
     assert.equal(ledger.state().tasks.get("T1").blocker.ownerRequired, true);
   }
 });
 
-
 test("a review bound to a different target cannot authorize agent correction", () => {
   const { ledger } = fresh();
-  for (const [id, n] of [["T1", 1], ["Other", 8]]) {
+  for (const [id, n] of [
+    ["T1", 1],
+    ["Other", 8],
+  ]) {
     if (id === "Other") ledger.addTask(task(id));
     ledger.reserveDispatch(id);
     ledger.recordReceipt(id, receipt(n));
-    ledger.recordCompletion({ childSessionKey: `agent:main:subagent:${n}`, outcome: "ok", digest: "same-artifact" });
+    ledger.recordCompletion({
+      childSessionKey: `agent:main:subagent:${n}`,
+      outcome: "ok",
+      digest: "same-artifact",
+    });
   }
   ledger.addTask(task("Reviewer", { role: "review" }));
-  ledger.reserveDispatch("Reviewer", { reviewBinding: { taskId: "Other", attempt: 1, digest: "same-artifact" } });
+  ledger.reserveDispatch("Reviewer", {
+    reviewBinding: { taskId: "Other", attempt: 1, digest: "same-artifact" },
+  });
   ledger.recordReceipt("Reviewer", receipt(9));
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:9", outcome: "ok" });
-  ledger.recordVerification("T1", { verifier: "agent:main:subagent:9", reviewerKind: "agent", verdict: "reject", findings: "defect" });
+  ledger.recordVerification("T1", {
+    verifier: "agent:main:subagent:9",
+    reviewerKind: "agent",
+    verdict: "reject",
+    findings: "defect",
+  });
   assert.equal(ledger.state().tasks.get("T1").blocker.ownerRequired, true);
+});
+
+test("ambiguous verifier identity cannot authorize autonomous correction or corrected pass", () => {
+  for (const collision of ["runId", "childSessionKey"]) {
+    const { ledger } = fresh();
+    ledger.reserveDispatch("T1");
+    ledger.recordReceipt("T1", receipt(1));
+    ledger.recordCompletion({
+      childSessionKey: "agent:main:subagent:1",
+      outcome: "ok",
+      digest: "a",
+    });
+    ledger.addTask(task("Other"));
+    ledger.reserveDispatch("Other");
+    ledger.recordReceipt(
+      "Other",
+      receipt(8, collision === "runId" ? { runId: "shared" } : { childSessionKey: "shared" }),
+    );
+    ledger.recordCompletion({
+      childSessionKey: collision === "runId" ? "agent:main:subagent:8" : "shared",
+      outcome: "ok",
+    });
+    ledger.addTask(task("Reviewer", { role: "review" }));
+    ledger.reserveDispatch("Reviewer", {
+      reviewBinding: { taskId: "T1", attempt: 1, digest: "a" },
+    });
+    ledger.recordReceipt("Reviewer", receipt(9, { runId: "shared" }));
+    ledger.recordCompletion({ childSessionKey: "agent:main:subagent:9", outcome: "ok" });
+    ledger.recordVerification("T1", {
+      verifier: "shared",
+      reviewerKind: "agent",
+      verdict: "reject",
+      findings: "bad",
+    });
+    assert.equal(ledger.state().tasks.get("T1").blocker.ownerRequired, true, collision);
+    throwsCode(
+      () =>
+        ledger.resolveBlocker("T1", {
+          reason: "fix",
+          authorizedBy: "coordinator",
+          sideEffectsChecked: true,
+          correctionScope: "fix",
+        }),
+      "not-owner",
+    );
+    ledger.resolveBlocker("T1", {
+      reason: "fix",
+      authorizedBy: "sebastian",
+      sideEffectsChecked: true,
+    });
+    ledger.reserveDispatch("T1");
+    ledger.recordReceipt("T1", receipt(10));
+    ledger.recordCompletion({
+      childSessionKey: "agent:main:subagent:10",
+      outcome: "ok",
+      digest: "b",
+    });
+    ledger.addTask(task("Reviewer2", { role: "review" }));
+    ledger.reserveDispatch("Reviewer2", {
+      reviewBinding: { taskId: "T1", attempt: 2, digest: "b" },
+    });
+    ledger.recordReceipt("Reviewer2", receipt(11, { runId: "shared" }));
+    ledger.recordCompletion({ childSessionKey: "agent:main:subagent:11", outcome: "ok" });
+    throwsCode(
+      () =>
+        ledger.recordVerification("T1", {
+          verifier: "shared",
+          reviewerKind: "agent",
+          verdict: "pass",
+          evidenceRefs: ["review"],
+        }),
+      "rereview-required",
+    );
+  }
+});
+
+test("bound dependent review dispatches at review-ready while other dependencies stay gated", () => {
+  const { ledger } = fresh();
+  ledger.addTask(task("Other"));
+  ledger.addTask(task("ReviewDependent", { role: "review", dependencies: ["T1", "Other"] }));
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok", digest: "a" });
+  const binding = { taskId: "T1", attempt: 1, digest: "a" };
+  throwsCode(() => ledger.reserveDispatch("ReviewDependent"), "dependency-unmet");
+  throwsCode(
+    () =>
+      ledger.reserveDispatch("ReviewDependent", { reviewBinding: { ...binding, digest: "wrong" } }),
+    "invalid-review-binding",
+  );
+  throwsCode(
+    () => ledger.reserveDispatch("ReviewDependent", { reviewBinding: binding }),
+    "dependency-unmet",
+  );
+  throwsCode(() => ledger.reserveDispatch("T2"), "dependency-unmet");
+  runToDone(ledger, "Other", 8);
+  ledger.reserveDispatch("ReviewDependent", {
+    reviewBinding: binding,
+    trigger: { type: "completion", childSessionKey: "agent:main:subagent:1" },
+  });
+  ledger.recordReceipt("ReviewDependent", receipt(9));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:9", outcome: "ok" });
+  ledger.recordVerification("T1", {
+    verifier: "agent:main:subagent:9",
+    reviewerKind: "agent",
+    verdict: "reject",
+    findings: "defect",
+  });
+  assert.equal(ledger.state().tasks.get("T1").blocker.ownerRequired, false);
+  ledger.resolveBlocker("T1", {
+    reason: "fix",
+    authorizedBy: "coordinator",
+    sideEffectsChecked: true,
+    correctionScope: "fix",
+  });
+  ledger.reserveDispatch("T1", { trigger: { type: "retry" } });
+  ledger.recordReceipt("T1", receipt(10));
+  ledger.recordCompletion({
+    childSessionKey: "agent:main:subagent:10",
+    outcome: "ok",
+    digest: "b",
+  });
+  throwsCode(
+    () =>
+      ledger.recordVerification("T1", {
+        verifier: "agent:main:subagent:9",
+        reviewerKind: "agent",
+        verdict: "pass",
+        evidenceRefs: ["old"],
+      }),
+    "rereview-required",
+  );
+  ledger.addTask(task("ReviewAgain", { role: "review", dependencies: ["T1"] }));
+  ledger.reserveDispatch("ReviewAgain", {
+    reviewBinding: { taskId: "T1", attempt: 2, digest: "b" },
+  });
+  ledger.recordReceipt("ReviewAgain", receipt(11));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:11", outcome: "ok" });
+  ledger.recordVerification("T1", {
+    verifier: "agent:main:subagent:11",
+    reviewerKind: "agent",
+    verdict: "pass",
+    evidenceRefs: ["new"],
+  });
+  ledger.recordDashboardSync("T1", "dashboard");
+  assert.equal(ledger.state().tasks.get("T1").status, "done");
 });
