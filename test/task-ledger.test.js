@@ -1,7 +1,7 @@
 import test from "node:test";
 import { spawn } from "node:child_process";
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -756,20 +756,18 @@ test("dispatch triggers: completion must reference a dependency; owner nudges de
   assert.equal(ledger.state().nudges.length, 2);
 });
 
-test("a lock is never auto-removed; only an explicit, token-matched break of a dead local writer clears it", () => {
+test("locks are never auto-removed; recovery requires externally quiesced writers", () => {
   const { file, ledger } = fresh();
   const dead = { pid: 2 ** 22 + 12345, host: hostname(), token: "tok-1" };
   writeFileSync(`${file}.lock`, JSON.stringify(dead));
   throwsCode(() => ledger.reserveDispatch("T1"), "ledger-busy");
   assert.equal(ledger.inspectLock().writerAlive, false);
-  throwsCode(() => ledger.breakStaleLock({ token: "wrong" }), "lock-not-stale");
-  ledger.breakStaleLock({ token: "tok-1" });
+  assert.equal(ledger.breakStaleLock, undefined);
+  unlinkSync(`${file}.lock`);
   assert.equal(ledger.reserveDispatch("T1"), 1);
   writeFileSync(`${file}.lock`, JSON.stringify({ ...dead, pid: process.pid }));
-  throwsCode(() => ledger.breakStaleLock({ token: "tok-1" }), "lock-not-stale");
   writeFileSync(`${file}.lock`, JSON.stringify({ ...dead, host: "elsewhere" }));
   assert.equal(ledger.inspectLock().writerAlive, "unknown");
-  throwsCode(() => ledger.breakStaleLock({ token: "tok-1" }), "lock-not-stale");
   throwsCode(() => ledger.recordQueued("T1"), "ledger-busy");
   writeFileSync(`${file}.lock`, "garbage");
   assert.equal(ledger.inspectLock().writerAlive, "unknown");
@@ -880,10 +878,28 @@ test("acceptance reports ledger-only criteria and host corroboration separately"
   assert.match(bare.notice, /not proof of a live/);
   const obs = [1, 2, 3].flatMap((n) => [
     { kind: "spawned", runId: `run-${n}`, childSessionKey: `agent:main:subagent:${n}` },
-    { kind: "ended", outcome: "ok", childSessionKey: `agent:main:subagent:${n}` },
+    {
+      kind: "ended",
+      runId: `run-${n}`,
+      outcome: "ok",
+      childSessionKey: `agent:main:subagent:${n}`,
+    },
   ]);
   const ok = assessAcceptance(ledger.state(), { gateTaskId: "G1", observations: obs }).accept01;
   assert.equal(ok.hostCorroborated, true);
+  for (const end of [
+    null,
+    { outcome: "error", runId: "run-1" },
+    { outcome: "ok", runId: "other" },
+    { outcome: "ok" },
+  ]) {
+    const modified = obs.filter((o) => !(o.kind === "ended" && o.childSessionKey.endsWith(":1")));
+    if (end) modified.push({ kind: "ended", childSessionKey: "agent:main:subagent:1", ...end });
+    assert.deepEqual(
+      assessAcceptance(ledger.state(), { observations: modified }).accept01.uncorroboratedTaskIds,
+      ["T1"],
+    );
+  }
   const bad = assessAcceptance(ledger.state(), {
     gateTaskId: "G1",
     observations: obs.slice(2),
@@ -924,4 +940,24 @@ test("plugin registers a read-only owner-only ledger status tool only when confi
     senderIsOwner: true,
   }).execute("c2", {});
   assert.equal(bad.details.view.planId, null);
+});
+
+test("applied timeout mismatch blocks, while absent or matching is accepted", () => {
+  for (const [value, blocked] of [
+    [undefined, false],
+    [600_000, false],
+    [42, true],
+    ["600000", true],
+  ]) {
+    const { ledger } = fresh();
+    ledger.reserveDispatch("T1");
+    ledger.recordReceipt("T1", receipt(1, { appliedTimeout: value }));
+    const task = ledger.state().tasks.get("T1");
+    assert.equal(task.status, blocked ? "blocked" : "running");
+    if (blocked) {
+      assert.equal(task.blocker.code, "timeout-mismatch");
+      ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" });
+      assert.equal(ledger.state().tasks.get("T1").status, "blocked");
+    }
+  }
 });

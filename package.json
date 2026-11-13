@@ -21,6 +21,8 @@
   },
   "files": [
     "src",
+    "bin",
+    "docs",
     "skills",
     "openclaw.plugin.json",
     "NOTICE",

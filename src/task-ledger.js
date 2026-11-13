@@ -21,6 +21,7 @@ export const BLOCKER_CODES = Object.freeze([
   "model-unavailable",
   "model-mismatch",
   "receipt-incomplete",
+  "timeout-mismatch",
   "review-rejected",
   "interrupted",
   "admission-unknown",
@@ -353,7 +354,7 @@ export function renderStatusMarkdown(view) {
  * not live acceptance: `evidenceSource` and receipts are coordinator-asserted, so
  * synthetic or hand-written entries can satisfy it. `hostCorroborated` is true only
  * when every standard-spawn done task has a matching host-observed spawn and a
- * non-failing end record (pass `observations` from the lifecycle observer); even
+ * successful end record with the same run id (pass `observations` from the lifecycle observer); even
  * then the owner must review the run log. Only `standard-spawn` receipts
  * count; adapter fake-host evidence is listed separately. The ledger cannot see
  * owner chat, so "zero nudge" means: every dependent dispatch was triggered by a
@@ -409,7 +410,12 @@ export function assessAcceptance(state, { gateTaskId, observations = [] } = {}) 
     .filter((t) => {
       const r = openAttempt(t).receipt;
       const e = seen.get(r.childSessionKey);
-      return !(e?.spawned && e.spawned.runId === r.runId && (!e.ended || e.ended.outcome === "ok"));
+      return !(
+        e?.spawned &&
+        e.spawned.runId === r.runId &&
+        e.ended?.runId === r.runId &&
+        e.ended.outcome === "ok"
+      );
     })
     .map((t) => t.id);
   const accept01 = {
@@ -648,18 +654,6 @@ export function createTaskLedger({
     view: () => deriveStatusView(state()),
     events: () => load().events,
     inspectLock,
-    /** Manual recovery after a crashed writer: only a dead same-host writer, matched by token. */
-    breakStaleLock({ token }) {
-      const info = inspectLock();
-      if (!info.locked) fail("no ledger lock present", "no-lock");
-      if (info.writerAlive !== false || !nonEmpty(token) || info.token !== token)
-        fail(
-          "lock is not provably stale: its writer must be a dead process on this host and the token must match",
-          "lock-not-stale",
-        );
-      unlinkSync(lockFile);
-      return { cleared: true };
-    },
     integrity: () => {
       const { events, tornTail } = load();
       return { events: events.length, tornTail };
@@ -783,6 +777,15 @@ export function createTaskLedger({
           problem = {
             code: "model-mismatch",
             reason: `requested ${t.requestedModel}, receipt ${receipt.resolvedProvider}/${receipt.resolvedModel}`,
+          };
+        if (
+          !problem &&
+          receipt.appliedTimeout !== "unconfirmed" &&
+          receipt.appliedTimeout !== t.timeoutMs
+        )
+          problem = {
+            code: "timeout-mismatch",
+            reason: `requested ${t.timeoutMs}ms, receipt applied ${String(receipt.appliedTimeout)}`,
           };
         return { taskId, receipt, problem };
       });

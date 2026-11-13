@@ -30,7 +30,7 @@ The main session is the coordinator and stays accountable for the plan, routing,
 
 ## Durable ledger (optional)
 
-When a task ledger is configured, follow the write/continuation order in [`docs/completion-driven-continuation.md`](../../docs/completion-driven-continuation.md#coordinator-writecontinuation-procedure). Ledger acceptance output is coordinator-asserted; never report it as live acceptance without owner review of the run log, and never record an owner decision without an authenticated owner message.
+When a task ledger is configured, the local `bin/coordinator-ledger.js` bridge can write it without plugin configuration when shell access and this checkout are available. It cannot spawn, yield, verify, publish, or authenticate owner decisions. Follow the write/continuation order in [`docs/completion-driven-continuation.md`](../../docs/completion-driven-continuation.md#coordinator-writecontinuation-procedure). Ledger acceptance output is coordinator-asserted; never report it as live acceptance without owner review of the run log, and never record an owner decision without an authenticated owner message.
 
 ## Three-dependent-task trial shape
 
