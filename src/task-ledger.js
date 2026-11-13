@@ -430,33 +430,58 @@ export function assessAcceptance(state, { gateTaskId, observations = [] } = {}) 
   // ACCEPT-01 requires an independent review, not an infinite chain of
   // independently reviewed reviewers. Only a bound, recorded review of a done
   // task by a done standard-spawn review worker counts; these remain assertions.
-  const independentlyVerified = doneStd.some((t) => {
+  const qualifyingReviews = [];
+  for (const t of doneStd) {
     const a = openAttempt(t);
     const v = a.verification;
-    return (
-      v?.verdict === "pass" &&
-      v.reviewProvenance === "independent-agent" &&
-      v.reviewBinding?.taskId === t.id &&
-      v.reviewBinding?.attempt === a.n &&
-      v.reviewBinding?.digest === a.completion?.digest &&
-      doneStd.some((reviewer) => {
-        const r = openAttempt(reviewer);
-        return (
-          reviewer.role === "review" &&
-          [r.receipt?.childSessionKey, r.receipt?.runId].includes(v.verifier) &&
-          r.reviewBinding?.taskId === t.id &&
-          r.reviewBinding?.attempt === a.n &&
-          r.reviewBinding?.digest === a.completion?.digest
-        );
-      })
-    );
-  });
+    if (
+      v?.verdict !== "pass" ||
+      v.reviewProvenance !== "independent-agent" ||
+      v.reviewBinding?.taskId !== t.id ||
+      v.reviewBinding?.attempt !== a.n ||
+      v.reviewBinding?.digest !== a.completion?.digest
+    )
+      continue;
+    for (const reviewer of doneStd) {
+      const r = openAttempt(reviewer);
+      if (
+        reviewer.role === "review" &&
+        [r.receipt?.childSessionKey, r.receipt?.runId].includes(v.verifier) &&
+        r.reviewBinding?.taskId === t.id &&
+        r.reviewBinding?.attempt === a.n &&
+        r.reviewBinding?.digest === a.completion?.digest
+      )
+        qualifyingReviews.push({ reviewer: reviewer.id, target: t.id });
+    }
+  }
+  const independentlyVerified = qualifyingReviews.length > 0;
   const gate = gateTaskId ? state.tasks.get(gateTaskId) : undefined;
   const haltedAtGate =
     Boolean(gate) &&
     gate.kind === "gate" &&
     gate.status === "pending" &&
     gate.dependencies.every((d) => state.tasks.get(d)?.status === "done");
+  // Follow only the actual completion trigger at each step, backwards from
+  // the gate. Independent review elsewhere in the ledger is not this run.
+  const doneByKey = new Map(doneStd.map((t) => [openAttempt(t).receipt.childSessionKey, t]));
+  const gateChainIncludesReview = (gate?.dependencies ?? []).some((id) => {
+    const path = [];
+    let current = state.tasks.get(id);
+    while (current && doneStd.includes(current) && !path.includes(current.id)) {
+      path.push(current.id);
+      const trigger = openAttempt(current).trigger;
+      const previous =
+        trigger?.type === "completion" ? doneByKey.get(trigger.childSessionKey) : null;
+      current = previous && current.dependencies.includes(previous.id) ? previous : null;
+    }
+    return (
+      path.length >= 3 &&
+      qualifyingReviews.some(({ reviewer, target }) => {
+        const reviewerIndex = path.indexOf(reviewer);
+        return reviewerIndex >= 0 && path.indexOf(target) > reviewerIndex;
+      })
+    );
+  });
   const zeroNudge =
     state.nudges.length === 0 && dependent.length > 0 && chained.length === dependent.length;
   const seen = new Map();
@@ -486,6 +511,7 @@ export function assessAcceptance(state, { gateTaskId, observations = [] } = {}) 
       chained.length >= 2 &&
       review &&
       independentlyVerified &&
+      gateChainIncludesReview &&
       haltedAtGate &&
       zeroNudge &&
       fake.length === 0,

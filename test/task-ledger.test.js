@@ -591,7 +591,7 @@ function runAcceptedChain(ledger) {
   runToDone(ledger, "T3", 3, 2);
 }
 
-test("ORCH-ACCEPT-01: three dependent standard-spawn tasks with review halt at the owner gate", () => {
+test("ORCH-ACCEPT-01 rejects a qualifying reviewer outside the completion chain to the gate", () => {
   const { ledger } = fresh();
   assert.equal(
     assessAcceptance(ledger.state(), { gateTaskId: "G1" }).accept01.ledgerCriteriaMet,
@@ -599,7 +599,8 @@ test("ORCH-ACCEPT-01: three dependent standard-spawn tasks with review halt at t
   );
   runAcceptedChain(ledger);
   const a = assessAcceptance(ledger.state(), { gateTaskId: "G1" });
-  assert.equal(a.accept01.ledgerCriteriaMet, true);
+  assert.equal(a.accept01.ledgerCriteriaMet, false);
+  assert.equal(a.accept01.independentlyVerified, true);
   assert.equal(a.accept01.haltedAtGate, true);
   assert.deepEqual(a.accept01.standardDoneTasks, ["T1", "T2", "T3", "BoundReview"]);
   assert.equal(assessAcceptance(ledger.state()).accept01.ledgerCriteriaMet, false);
@@ -608,6 +609,45 @@ test("ORCH-ACCEPT-01: three dependent standard-spawn tasks with review halt at t
     assessAcceptance(ledger.state(), { gateTaskId: "G1" }).accept01.ledgerCriteriaMet,
     false,
   );
+});
+
+test("ORCH-ACCEPT-01 accepts a bound independent reviewer in the completion chain to the gate", () => {
+  const { ledger } = fresh();
+  ledger.addTask(task("ChainReview", { role: "review", dependencies: ["T1"] }));
+  ledger.addTask(task("AfterReview", { dependencies: ["ChainReview"] }));
+  ledger.addTask(
+    task("ChainGate", { kind: "gate", requestedModel: undefined, dependencies: ["AfterReview"] }),
+  );
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1));
+  ledger.recordCompletion({
+    childSessionKey: "agent:main:subagent:1",
+    outcome: "ok",
+    digest: "artifact",
+  });
+  ledger.reserveDispatch("ChainReview", {
+    trigger: { type: "completion", childSessionKey: "agent:main:subagent:1" },
+    reviewBinding: { taskId: "T1", attempt: 1, digest: "artifact" },
+  });
+  ledger.recordReceipt("ChainReview", receipt(4));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:4", outcome: "ok" });
+  ledger.recordVerification("ChainReview", {
+    verifier: "other",
+    verdict: "pass",
+    evidenceRefs: ["e"],
+  });
+  ledger.recordDashboardSync("ChainReview", "d");
+  ledger.recordVerification("T1", {
+    verifier: "agent:main:subagent:4",
+    reviewerKind: "agent",
+    verdict: "pass",
+    evidenceRefs: ["e"],
+  });
+  ledger.recordDashboardSync("T1", "d");
+  runToDone(ledger, "AfterReview", 5, 4);
+  const result = assessAcceptance(ledger.state(), { gateTaskId: "ChainGate" }).accept01;
+  assert.equal(result.independentlyVerified, true);
+  assert.equal(result.ledgerCriteriaMet, true);
 });
 
 test("ORCH-ACCEPT-02: each failure scenario is reported covered only by standard-spawn evidence", () => {
