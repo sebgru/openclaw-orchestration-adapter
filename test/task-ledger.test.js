@@ -1058,3 +1058,88 @@ test("rejected gate cannot be reopened by non-owner", () => {
   );
   ledger.resolveBlocker("G", { reason: "reopen", authorizedBy: "sebastian" });
 });
+
+function rejectedWith(ledger, verifier, extra = {}) {
+  runToDone(ledger, "T1", 1);
+  ledger.reserveDispatch("T2");
+  ledger.recordReceipt("T2", receipt(2));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:2", outcome: "ok" });
+  ledger.recordVerification("T2", { verifier, verdict: "reject", findings: "defect", ...extra });
+}
+
+test("independent agent review rejection permits scoped bounded correction without owner", () => {
+  const { ledger } = fresh({ owners: [] });
+  rejectedWith(ledger, "agent:main:subagent:1");
+  const t = ledger.state().tasks.get("T2");
+  assert.equal(t.blocker.ownerRequired, false);
+  throwsCode(
+    () => ledger.resolveBlocker("T2", { reason: "r", authorizedBy: "c", sideEffectsChecked: true }),
+    "invalid-resolution",
+  );
+  ledger.resolveBlocker("T2", {
+    reason: "fix",
+    authorizedBy: "coordinator",
+    sideEffectsChecked: true,
+    correctionScope: "address defect only",
+  });
+  assert.equal(ledger.state().tasks.get("T2").status, "pending");
+  ledger.reserveDispatch("T2");
+});
+
+test("unverified, human-claimed or owner reviewers keep rejection owner-gated", () => {
+  for (const [verifier, extra] of [
+    ["someone", {}],
+    ["agent:main:subagent:1", { reviewerKind: "human" }],
+    ["sebastian", {}],
+  ]) {
+    const { ledger } = fresh();
+    rejectedWith(ledger, verifier, extra);
+    assert.equal(ledger.state().tasks.get("T2").blocker.ownerRequired, true);
+    throwsCode(
+      () =>
+        ledger.resolveBlocker("T2", {
+          reason: "r",
+          authorizedBy: "c",
+          sideEffectsChecked: true,
+          correctionScope: "x",
+        }),
+      "not-owner",
+    );
+  }
+  const { ledger } = fresh({ owners: [] });
+  rejectedWith(ledger, "someone");
+  throwsCode(
+    () =>
+      ledger.resolveBlocker("T2", {
+        reason: "r",
+        authorizedBy: "sebastian",
+        sideEffectsChecked: true,
+      }),
+    "owners-not-configured",
+  );
+});
+
+test("agent-review correction retries stay bounded by maxAttempts", () => {
+  const { ledger } = fresh({ owners: [] });
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" });
+  ledger.recordVerification("T1", { verifier: "v", verdict: "pass", evidenceRefs: ["e"] });
+  ledger.recordDashboardSync("T1", "d");
+  ledger.addTask(task("R", { maxAttempts: 1 }));
+  ledger.reserveDispatch("R");
+  ledger.recordReceipt("R", receipt(5));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:5", outcome: "ok" });
+  ledger.recordVerification("R", {
+    verifier: "agent:main:subagent:1",
+    verdict: "reject",
+    findings: "bad",
+  });
+  ledger.resolveBlocker("R", {
+    reason: "fix",
+    authorizedBy: "c",
+    sideEffectsChecked: true,
+    correctionScope: "s",
+  });
+  throwsCode(() => ledger.reserveDispatch("R"), "attempts-exhausted");
+});

@@ -136,7 +136,7 @@ const liveChild = (att) =>
 /** Fold ledger events into current task state. Pure: replay is the only source of truth. */
 export function reduceLedger(events) {
   const state = { planId: null, capability: null, tasks: new Map(), notes: [], nudges: [] };
-  const block = (task, code, reason, evidenceSource) => {
+  const block = (task, code, reason, evidenceSource, extra = {}) => {
     task.status = "blocked";
     const att = openAttempt(task);
     task.blocker = {
@@ -144,6 +144,7 @@ export function reduceLedger(events) {
       reason,
       resolved: false,
       evidenceSource: evidenceSource ?? att?.evidenceSource ?? null,
+      ...extra,
     };
     if (att) att.blockerCodes.push(code);
   };
@@ -221,6 +222,7 @@ export function reduceLedger(events) {
           verifier: data.verifier,
           evidenceRefs: data.evidenceRefs,
           findings: data.findings ?? null,
+          reviewProvenance: data.reviewProvenance ?? "unverified",
           at: ts,
         };
         if (data.verdict === "pass") {
@@ -232,6 +234,7 @@ export function reduceLedger(events) {
             "review-rejected",
             data.findings ?? "verification rejected",
             att.evidenceSource,
+            { ownerRequired: data.reviewProvenance !== "independent-agent" },
           );
         break;
       case "dashboard_synced":
@@ -264,6 +267,7 @@ export function reduceLedger(events) {
           resolved: true,
           resolution: data.reason,
           authorizedBy: data.authorizedBy,
+          ...(data.correctionScope ? { correctionScope: data.correctionScope } : {}),
         };
         if (att && data.childStatus && liveChild(att))
           att.abandoned = { status: data.childStatus, evidence: data.childEvidence };
@@ -871,7 +875,7 @@ export function createTaskLedger({
       });
     },
 
-    recordVerification(taskId, { verdict, evidenceRefs, findings, verifier }) {
+    recordVerification(taskId, { verdict, evidenceRefs, findings, verifier, reviewerKind }) {
       return commit("verification_recorded", (s) => {
         const a = needAttempt(need(s, taskId), "review-ready");
         if (!nonEmpty(verifier))
@@ -884,7 +888,30 @@ export function createTaskLedger({
           fail("a pass requires fresh evidence references", "invalid-verification");
         if (verdict === "reject" && !nonEmpty(findings))
           fail("a rejection records findings", "invalid-verification");
-        return { taskId, verdict, verifier, evidenceRefs: evidenceRefs ?? [], findings };
+        // Independent-agent review is derived from ledger evidence (the verifier is another task's
+        // completed child), never from a caller-supplied label. Anything else stays owner-gated.
+        const independent = [...s.tasks.values()].some(
+          (o) =>
+            o.id !== taskId &&
+            o.attempts.some(
+              (x) =>
+                x.completion?.outcome === "ok" &&
+                !x.abandoned &&
+                [x.receipt?.childSessionKey, x.receipt?.runId].includes(verifier),
+            ),
+        );
+        const reviewProvenance =
+          independent && reviewerKind !== "human" && !owners.includes(verifier)
+            ? "independent-agent"
+            : "unverified";
+        return {
+          taskId,
+          verdict,
+          verifier,
+          evidenceRefs: evidenceRefs ?? [],
+          findings,
+          reviewProvenance,
+        };
       });
     },
 
@@ -957,7 +984,7 @@ export function createTaskLedger({
     /** Reopen a blocked task for a retry only after the side effects were inspected. */
     resolveBlocker(
       taskId,
-      { reason, authorizedBy, sideEffectsChecked, childStatus, childEvidence },
+      { reason, authorizedBy, sideEffectsChecked, childStatus, childEvidence, correctionScope },
     ) {
       return commit("blocker_resolved", (s) => {
         const t = need(s, taskId);
@@ -965,7 +992,20 @@ export function createTaskLedger({
           fail(`${taskId} has no open blocker`, "invalid-transition");
         if (!nonEmpty(reason) || !nonEmpty(authorizedBy))
           fail("resolution needs reason and authorizedBy", "invalid-resolution");
-        if (t.kind === "gate" || ["gate-rejected", "review-rejected"].includes(t.blocker.code))
+        const agentReview =
+          t.kind === "worker" &&
+          t.blocker.code === "review-rejected" &&
+          t.blocker.ownerRequired === false;
+        if (agentReview) {
+          if (!nonEmpty(correctionScope))
+            fail(
+              "agent-review rejection needs a scoped correction description",
+              "invalid-resolution",
+            );
+        } else if (
+          t.kind === "gate" ||
+          ["gate-rejected", "review-rejected"].includes(t.blocker.code)
+        )
           requireOwner(authorizedBy);
         if (t.blocker.code === "admission-unknown" && !openAttempt(t)?.receipt)
           fail(
@@ -985,9 +1025,9 @@ export function createTaskLedger({
               "the blocked attempt still has a live child; confirm via subagents that it is terminal or cancelled and cite the evidence",
               "live-child",
             );
-          return { taskId, reason, authorizedBy, childStatus, childEvidence };
+          return { taskId, reason, authorizedBy, childStatus, childEvidence, correctionScope };
         }
-        return { taskId, reason, authorizedBy };
+        return { taskId, reason, authorizedBy, correctionScope };
       });
     },
 
