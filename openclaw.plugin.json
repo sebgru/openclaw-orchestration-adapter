@@ -119,8 +119,13 @@
               "additionalProperties": false,
               "required": ["toolName", "params"],
               "properties": {
-                "toolName": { "type": "string", "minLength": 1 },
-                "params": { "type": "object" }
+                "toolName": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "params": {
+                  "type": "object"
+                }
               }
             }
           },
@@ -141,8 +146,16 @@
             "additionalProperties": false,
             "description": "Enables the optional orchestration_run_plan tool (multi-task dependency waves with context-separated model judgment). Per-task grants and budgets are capped by the dispatch ceiling above.",
             "properties": {
-              "maxTasks": { "type": "integer", "minimum": 1, "maximum": 16 },
-              "maxParallel": { "type": "integer", "minimum": 1, "maximum": 8 },
+              "maxTasks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "maxParallel": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              },
               "verifierTier": {
                 "type": "string",
                 "enum": ["priority", "cheap", "standard", "strong"]
@@ -150,11 +163,28 @@
             }
           }
         }
+      },
+      "ledger": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file"],
+        "description": "Enables the read-only orchestration_ledger_status tool over the coordinator's durable task ledger (absolute JSONL path).",
+        "properties": {
+          "file": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     }
   },
   "contracts": {
-    "tools": ["orchestration_dispatch", "orchestration_run_plan", "orchestration_canary"]
+    "tools": [
+      "orchestration_dispatch",
+      "orchestration_run_plan",
+      "orchestration_canary",
+      "orchestration_ledger_status"
+    ]
   },
   "toolMetadata": {
     "orchestration_dispatch": {
@@ -166,6 +196,10 @@
       "sideEffecting": true
     },
     "orchestration_canary": {
+      "optional": true,
+      "sideEffecting": false
+    },
+    "orchestration_ledger_status": {
       "optional": true,
       "sideEffecting": false
     }

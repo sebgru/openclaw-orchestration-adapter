@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import {
   assessAcceptance,
@@ -22,6 +22,7 @@ const task = (id, extra = {}) => ({
   ...extra,
 });
 const receipt = (n, extra = {}) => ({
+  evidenceSource: "standard-spawn",
   runId: `run-${n}`,
   childSessionKey: `agent:main:subagent:${n}`,
   resolvedModel: "claude-sonnet-5-5",
@@ -32,7 +33,7 @@ const receipt = (n, extra = {}) => ({
 function fresh(options = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "oa2-ledger-"));
   const file = path.join(dir, "ledger.jsonl");
-  const ledger = createTaskLedger({ file, ...options });
+  const ledger = createTaskLedger({ file, owners: ["sebastian"], ...options });
   ledger.declarePlan({
     planId: "p1",
     tasks: [
@@ -50,23 +51,59 @@ function throwsCode(fn, code) {
   assert.throws(fn, (e) => e.name === "LedgerError" && e.code === code, `expected ${code}`);
 }
 
-function runToDone(ledger, id, n) {
-  ledger.reserveDispatch(id);
+function runToDone(ledger, id, n, prev) {
+  ledger.reserveDispatch(
+    id,
+    prev
+      ? { trigger: { type: "completion", childSessionKey: `agent:main:subagent:${prev}` } }
+      : undefined,
+  );
   ledger.recordReceipt(id, receipt(n));
   ledger.recordCompletion({ childSessionKey: `agent:main:subagent:${n}`, outcome: "ok" });
-  ledger.recordVerification(id, { verdict: "pass", evidenceRefs: [`ev-${id}`] });
+  ledger.recordVerification(id, {
+    verifier: "verifier-1",
+    verdict: "pass",
+    evidenceRefs: [`ev-${id}`],
+  });
   ledger.recordDashboardSync(id, `dash-${id}`);
 }
 
 test("plan validation rejects cycles, unknown dependencies and unobservable tasks", () => {
-  const ledger = createTaskLedger({ file: path.join(mkdtempSync(path.join(tmpdir(), "oa2-")), "l.jsonl") });
-  throwsCode(() => ledger.declarePlan({ planId: "x", tasks: [task("A", { dependencies: ["B"] }), task("B", { dependencies: ["A"] })] }), "invalid-plan");
-  throwsCode(() => ledger.declarePlan({ planId: "x", tasks: [task("A", { dependencies: ["Z"] })] }), "invalid-plan");
-  throwsCode(() => ledger.declarePlan({ planId: "x", tasks: [{ ...task("A"), successCriteria: [] }] }), "invalid-plan");
-  throwsCode(() => ledger.declarePlan({ planId: "x", tasks: [{ ...task("A"), timeoutMs: undefined }] }), "invalid-plan");
-  throwsCode(() => ledger.declarePlan({ planId: "x", tasks: [{ ...task("A"), requestedModel: undefined }] }), "invalid-plan");
-  throwsCode(() => ledger.declarePlan({ planId: "x", tasks: [task("A"), task("A")] }), "invalid-plan");
-  throwsCode(() => ledger.declarePlan({ planId: "x", tasks: [task("A", { dependencies: ["A"] })] }), "invalid-plan");
+  const ledger = createTaskLedger({
+    file: path.join(mkdtempSync(path.join(tmpdir(), "oa2-")), "l.jsonl"),
+  });
+  throwsCode(
+    () =>
+      ledger.declarePlan({
+        planId: "x",
+        tasks: [task("A", { dependencies: ["B"] }), task("B", { dependencies: ["A"] })],
+      }),
+    "invalid-plan",
+  );
+  throwsCode(
+    () => ledger.declarePlan({ planId: "x", tasks: [task("A", { dependencies: ["Z"] })] }),
+    "invalid-plan",
+  );
+  throwsCode(
+    () => ledger.declarePlan({ planId: "x", tasks: [{ ...task("A"), successCriteria: [] }] }),
+    "invalid-plan",
+  );
+  throwsCode(
+    () => ledger.declarePlan({ planId: "x", tasks: [{ ...task("A"), timeoutMs: undefined }] }),
+    "invalid-plan",
+  );
+  throwsCode(
+    () => ledger.declarePlan({ planId: "x", tasks: [{ ...task("A"), requestedModel: undefined }] }),
+    "invalid-plan",
+  );
+  throwsCode(
+    () => ledger.declarePlan({ planId: "x", tasks: [task("A"), task("A")] }),
+    "invalid-plan",
+  );
+  throwsCode(
+    () => ledger.declarePlan({ planId: "x", tasks: [task("A", { dependencies: ["A"] })] }),
+    "invalid-plan",
+  );
 });
 
 test("dependency DAG is visible: waiting, ready, gated and blocked-upstream", () => {
@@ -76,10 +113,18 @@ test("dependency DAG is visible: waiting, ready, gated and blocked-upstream", ()
   assert.equal(by("T1").status, "ready");
   assert.equal(by("T2").status, "waiting");
   assert.deepEqual(by("T2").waitingOn, ["T1"]);
-  assert.deepEqual(view.edges, [["T1", "T2"], ["T2", "T3"], ["T3", "G1"]]);
+  assert.deepEqual(view.edges, [
+    ["T1", "T2"],
+    ["T2", "T3"],
+    ["T3", "G1"],
+  ]);
   ledger.reserveDispatch("T1");
   ledger.recordReceipt("T1", receipt(1));
-  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "error", reason: "boom" });
+  ledger.recordCompletion({
+    childSessionKey: "agent:main:subagent:1",
+    outcome: "error",
+    reason: "boom",
+  });
   view = ledger.view();
   assert.equal(by("T1").status, "blocked");
   assert.equal(by("T2").status, "blocked-upstream");
@@ -94,7 +139,7 @@ test("dependent dispatch is refused until dependencies are done, not merely comp
   ledger.recordReceipt("T1", receipt(1));
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" });
   throwsCode(() => ledger.reserveDispatch("T2"), "dependency-unmet");
-  ledger.recordVerification("T1", { verdict: "pass", evidenceRefs: ["e"] });
+  ledger.recordVerification("T1", { verifier: "verifier-1", verdict: "pass", evidenceRefs: ["e"] });
   throwsCode(() => ledger.reserveDispatch("T2"), "dependency-unmet");
   ledger.recordDashboardSync("T1", "dash");
   assert.equal(ledger.reserveDispatch("T2"), 1);
@@ -107,12 +152,15 @@ test("dispatch needs evidenced spawn capability and never infers it", () => {
   throwsCode(() => ledger.reserveDispatch("A"), "capability-missing");
   ledger.recordCapability({ tools: ["sessions_spawn"], publisherTool: "dashboard" });
   throwsCode(() => ledger.reserveDispatch("A"), "capability-missing");
-  assert.deepEqual(assessContinuationCapability({ tools: ["sessions_spawn", "sessions_yield", "subagents"] }), {
-    canDispatch: true,
-    canPublish: false,
-    publisherTool: null,
-    missing: ["publisher"],
-  });
+  assert.deepEqual(
+    assessContinuationCapability({ tools: ["sessions_spawn", "sessions_yield", "subagents"] }),
+    {
+      canDispatch: true,
+      canPublish: false,
+      publisherTool: null,
+      missing: ["publisher"],
+    },
+  );
   assert.equal(assessContinuationCapability().canDispatch, false);
 });
 
@@ -124,13 +172,21 @@ test("a missing publisher blocks completion and dependents without bypass", () =
   ledger.reserveDispatch("A");
   ledger.recordReceipt("A", receipt(1));
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" });
-  ledger.recordVerification("A", { verdict: "pass", evidenceRefs: ["e"] });
+  ledger.recordVerification("A", { verifier: "verifier-1", verdict: "pass", evidenceRefs: ["e"] });
   throwsCode(() => ledger.recordDashboardSync("A", "claimed"), "publisher-unavailable");
   assert.equal(ledger.state().tasks.get("A").status, "verified");
   throwsCode(() => ledger.reserveDispatch("B"), "dependency-unmet");
   ledger.recordPublisherFailure("A", "no dashboard tool");
   assert.equal(ledger.state().tasks.get("A").blocker.code, "publisher-unavailable");
-  throwsCode(() => ledger.resolveBlocker("A", { reason: "x", authorizedBy: "coordinator", sideEffectsChecked: true }), "invalid-resolution");
+  throwsCode(
+    () =>
+      ledger.resolveBlocker("A", {
+        reason: "x",
+        authorizedBy: "coordinator",
+        sideEffectsChecked: true,
+      }),
+    "invalid-resolution",
+  );
 });
 
 test("duplicate dispatch is refused for reserved, running and review-ready attempts", () => {
@@ -187,17 +243,33 @@ test("completion identity comes from the trusted session key: unmatched and dupl
   const { ledger } = fresh();
   ledger.reserveDispatch("T1");
   ledger.recordReceipt("T1", receipt(1));
-  throwsCode(() => ledger.recordCompletion({ childSessionKey: "agent:main:subagent:forged", outcome: "ok" }), "unmatched-completion");
+  throwsCode(
+    () => ledger.recordCompletion({ childSessionKey: "agent:main:subagent:forged", outcome: "ok" }),
+    "unmatched-completion",
+  );
   assert.equal(ledger.state().tasks.get("T1").status, "running");
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" });
-  throwsCode(() => ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "error" }), "duplicate-completion");
+  throwsCode(
+    () => ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "error" }),
+    "duplicate-completion",
+  );
   assert.equal(ledger.state().tasks.get("T1").status, "review-ready");
-  assert.deepEqual(ledger.state().notes.map((n) => n.type), ["completion_unmatched", "completion_duplicate"]);
-  throwsCode(() => ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "weird" }), "duplicate-completion");
+  assert.deepEqual(
+    ledger.state().notes.map((n) => n.type),
+    ["completion_unmatched", "completion_duplicate"],
+  );
+  throwsCode(
+    () => ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "weird" }),
+    "duplicate-completion",
+  );
 });
 
 test("worker error, timeout and interruption block the task and never advance dependents", () => {
-  for (const [outcome, code] of [["error", "worker-error"], ["timeout", "timeout"], ["aborted", "interrupted"]]) {
+  for (const [outcome, code] of [
+    ["error", "worker-error"],
+    ["timeout", "timeout"],
+    ["aborted", "interrupted"],
+  ]) {
     const { ledger } = fresh();
     ledger.reserveDispatch("T1");
     ledger.recordReceipt("T1", receipt(1));
@@ -205,7 +277,15 @@ test("worker error, timeout and interruption block the task and never advance de
     assert.equal(ledger.state().tasks.get("T1").blocker.code, code);
     assert.equal(ledger.state().tasks.get("T1").verified, false);
     throwsCode(() => ledger.reserveDispatch("T2"), "dependency-unmet");
-    throwsCode(() => ledger.recordVerification("T1", { verdict: "pass", evidenceRefs: ["e"] }), "invalid-transition");
+    throwsCode(
+      () =>
+        ledger.recordVerification("T1", {
+          verifier: "verifier-1",
+          verdict: "pass",
+          evidenceRefs: ["e"],
+        }),
+      "invalid-transition",
+    );
   }
 });
 
@@ -213,7 +293,10 @@ test("unknown completion outcome is rejected without state change", () => {
   const { ledger } = fresh();
   ledger.reserveDispatch("T1");
   ledger.recordReceipt("T1", receipt(1));
-  throwsCode(() => ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "weird" }), "invalid-completion");
+  throwsCode(
+    () => ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "weird" }),
+    "invalid-completion",
+  );
   assert.equal(ledger.state().tasks.get("T1").status, "running");
 });
 
@@ -223,10 +306,28 @@ test("rejected review blocks with findings; a pass needs evidence refs", () => {
   ledger.reserveDispatch("T2");
   ledger.recordReceipt("T2", receipt(2));
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:2", outcome: "ok" });
-  throwsCode(() => ledger.recordVerification("T2", { verdict: "pass", evidenceRefs: [] }), "invalid-verification");
-  throwsCode(() => ledger.recordVerification("T2", { verdict: "reject" }), "invalid-verification");
-  throwsCode(() => ledger.recordVerification("T2", { verdict: "maybe" }), "invalid-verification");
-  ledger.recordVerification("T2", { verdict: "reject", findings: "criterion 2 not met" });
+  throwsCode(
+    () =>
+      ledger.recordVerification("T2", {
+        verifier: "verifier-1",
+        verdict: "pass",
+        evidenceRefs: [],
+      }),
+    "invalid-verification",
+  );
+  throwsCode(
+    () => ledger.recordVerification("T2", { verifier: "verifier-1", verdict: "reject" }),
+    "invalid-verification",
+  );
+  throwsCode(
+    () => ledger.recordVerification("T2", { verifier: "verifier-1", verdict: "maybe" }),
+    "invalid-verification",
+  );
+  ledger.recordVerification("T2", {
+    verifier: "verifier-1",
+    verdict: "reject",
+    findings: "criterion 2 not met",
+  });
   const t = ledger.state().tasks.get("T2");
   assert.equal(t.blocker.code, "review-rejected");
   assert.equal(t.blocker.reason, "criterion 2 not met");
@@ -241,7 +342,7 @@ test("dashboard checkpoint cannot be skipped: done only via verified plus confir
   throwsCode(() => ledger.recordDashboardSync("T1", "x"), "invalid-transition");
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" });
   throwsCode(() => ledger.recordDashboardSync("T1", "x"), "invalid-transition");
-  ledger.recordVerification("T1", { verdict: "pass", evidenceRefs: ["e"] });
+  ledger.recordVerification("T1", { verifier: "verifier-1", verdict: "pass", evidenceRefs: ["e"] });
   assert.equal(ledger.state().tasks.get("T1").status, "verified");
   throwsCode(() => ledger.recordDashboardSync("T1", " "), "invalid-checkpoint");
   ledger.recordDashboardSync("T1", "dash-1");
@@ -255,45 +356,79 @@ test("retry needs an explicit resolved blocker, side-effect check, and is bounde
   ledger.recordReceipt("T1", receipt(1));
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "timeout" });
   throwsCode(() => ledger.reserveDispatch("T1"), "duplicate-dispatch");
-  throwsCode(() => ledger.resolveBlocker("T1", { reason: "r", authorizedBy: "coordinator" }), "invalid-resolution");
-  throwsCode(() => ledger.resolveBlocker("T1", { reason: "", authorizedBy: "coordinator", sideEffectsChecked: true }), "invalid-resolution");
-  throwsCode(() => ledger.resolveBlocker("T2", { reason: "r", authorizedBy: "c", sideEffectsChecked: true }), "invalid-transition");
-  ledger.resolveBlocker("T1", { reason: "worktree inspected, no partial writes", authorizedBy: "coordinator", sideEffectsChecked: true });
+  throwsCode(
+    () => ledger.resolveBlocker("T1", { reason: "r", authorizedBy: "coordinator" }),
+    "invalid-resolution",
+  );
+  throwsCode(
+    () =>
+      ledger.resolveBlocker("T1", {
+        reason: "",
+        authorizedBy: "coordinator",
+        sideEffectsChecked: true,
+      }),
+    "invalid-resolution",
+  );
+  throwsCode(
+    () => ledger.resolveBlocker("T2", { reason: "r", authorizedBy: "c", sideEffectsChecked: true }),
+    "invalid-transition",
+  );
+  ledger.resolveBlocker("T1", {
+    reason: "worktree inspected, no partial writes",
+    authorizedBy: "coordinator",
+    sideEffectsChecked: true,
+  });
   assert.equal(ledger.view().tasks[0].status, "ready");
   assert.equal(ledger.reserveDispatch("T1"), 2);
   ledger.recordReceipt("T1", receipt(2));
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:2", outcome: "error" });
-  ledger.resolveBlocker("T1", { reason: "again", authorizedBy: "coordinator", sideEffectsChecked: true });
+  ledger.resolveBlocker("T1", {
+    reason: "again",
+    authorizedBy: "coordinator",
+    sideEffectsChecked: true,
+  });
   throwsCode(() => ledger.reserveDispatch("T1"), "attempts-exhausted");
 });
 
 test("owner gate stops at human review; approval is scoped to that gate and not dispatchable", () => {
   const { ledger } = fresh();
   throwsCode(() => ledger.reserveDispatch("G1"), "not-dispatchable");
-  throwsCode(() => ledger.approveGate("G1", { approvedBy: "sebastian", ref: "pr#1" }), "dependency-unmet");
+  throwsCode(
+    () => ledger.approveGate("G1", { approvedBy: "sebastian", ref: "pr#1" }),
+    "dependency-unmet",
+  );
   runToDone(ledger, "T1", 1);
   runToDone(ledger, "T2", 2);
   runToDone(ledger, "T3", 3);
   assert.equal(ledger.view().tasks.find((t) => t.id === "G1").status, "gated");
-  throwsCode(() => ledger.approveGate("G1", { approvedBy: "", ref: "x" }), "invalid-gate");
+  throwsCode(() => ledger.approveGate("G1", { approvedBy: "", ref: "x" }), "not-owner");
   ledger.approveGate("G1", { approvedBy: "sebastian", ref: "pr#1" });
-  throwsCode(() => ledger.approveGate("G1", { approvedBy: "sebastian", ref: "pr#1" }), "invalid-transition");
+  throwsCode(
+    () => ledger.approveGate("G1", { approvedBy: "sebastian", ref: "pr#1" }),
+    "invalid-transition",
+  );
   assert.equal(ledger.state().tasks.get("G1").approvedBy, "sebastian");
 });
 
 test("rejected gate blocks and defer needs an owner decision reference", () => {
   const { ledger } = fresh();
-  throwsCode(() => ledger.deferTask("T1", ""), "invalid-deferral");
-  ledger.deferTask("T1", "owner decision 2026-11-13");
+  throwsCode(
+    () => ledger.deferTask("T1", { approvedBy: "sebastian", ownerDecision: "" }),
+    "invalid-deferral",
+  );
+  ledger.deferTask("T1", { approvedBy: "sebastian", ownerDecision: "owner decision 2026-11-13" });
   assert.equal(ledger.state().tasks.get("T1").status, "deferred");
   throwsCode(() => ledger.reserveDispatch("T1"), "duplicate-dispatch");
   const g = fresh();
   runToDone(g.ledger, "T1", 1);
   runToDone(g.ledger, "T2", 2);
   runToDone(g.ledger, "T3", 3);
-  g.ledger.rejectGate("G1", "changes requested");
+  g.ledger.rejectGate("G1", "changes requested", { rejectedBy: "sebastian" });
   assert.equal(g.ledger.state().tasks.get("G1").blocker.code, "gate-rejected");
-  throwsCode(() => g.ledger.rejectGate("T1", "x"), "invalid-transition");
+  throwsCode(
+    () => g.ledger.rejectGate("T1", "x", { rejectedBy: "sebastian" }),
+    "invalid-transition",
+  );
 });
 
 test("addTask extends the DAG with a fix task and re-review, still rejecting cycles", () => {
@@ -313,13 +448,19 @@ test("durable recovery: a new ledger instance resumes verified work and in-fligh
   ledger.recordReceipt("T2", receipt(2));
   const resumed = createTaskLedger({ file });
   const { flagged, state } = resumed.recover();
-  assert.deepEqual(flagged, [{ taskId: "T2", action: "await-completion", childSessionKey: "agent:main:subagent:2" }]);
+  assert.deepEqual(flagged, [
+    { taskId: "T2", action: "await-completion", childSessionKey: "agent:main:subagent:2" },
+  ]);
   assert.equal(state.tasks.get("T1").status, "done");
   throwsCode(() => resumed.reserveDispatch("T1"), "duplicate-dispatch");
   throwsCode(() => resumed.reserveDispatch("T2"), "duplicate-dispatch");
   resumed.recordCompletion({ childSessionKey: "agent:main:subagent:2", outcome: "ok" });
   assert.equal(resumed.recover().flagged[0].action, "verify");
-  resumed.recordVerification("T2", { verdict: "pass", evidenceRefs: ["e"] });
+  resumed.recordVerification("T2", {
+    verifier: "verifier-1",
+    verdict: "pass",
+    evidenceRefs: ["e"],
+  });
   assert.equal(resumed.recover().flagged[0].action, "publish-checkpoint");
 });
 
@@ -332,7 +473,11 @@ test("recovery never auto-redispatches a reservation without a receipt", () => {
   const t = resumed.state().tasks.get("T1");
   assert.equal(t.blocker.code, "admission-unknown");
   throwsCode(() => resumed.reserveDispatch("T1"), "duplicate-dispatch");
-  resumed.resolveBlocker("T1", { reason: "subagents list shows no run for T1", authorizedBy: "coordinator", sideEffectsChecked: true });
+  resumed.resolveBlocker("T1", {
+    reason: "subagents list shows no run for T1",
+    authorizedBy: "coordinator",
+    sideEffectsChecked: true,
+  });
   assert.equal(resumed.reserveDispatch("T1"), 2);
 });
 
@@ -372,11 +517,14 @@ test("ledger path must be absolute", () => {
 
 test("acceptance excludes adapter fake-host evidence from standard-spawn claims", () => {
   const { ledger } = fresh();
-  for (const [id, n] of [["T1", 1], ["T2", 2]]) {
+  for (const [id, n] of [
+    ["T1", 1],
+    ["T2", 2],
+  ]) {
     ledger.reserveDispatch(id);
     ledger.recordReceipt(id, receipt(n, { evidenceSource: "adapter-fake-host" }));
     ledger.recordCompletion({ childSessionKey: `agent:main:subagent:${n}`, outcome: "ok" });
-    ledger.recordVerification(id, { verdict: "pass", evidenceRefs: ["e"] });
+    ledger.recordVerification(id, { verifier: "verifier-1", verdict: "pass", evidenceRefs: ["e"] });
     ledger.recordDashboardSync(id, "d");
   }
   const result = assessAcceptance(ledger.state(), { gateTaskId: "G1" });
@@ -384,17 +532,23 @@ test("acceptance excludes adapter fake-host evidence from standard-spawn claims"
   assert.deepEqual(result.accept01.standardDoneTasks, []);
   assert.deepEqual(result.fakeHostTaskIds, ["T1", "T2"]);
   assert.equal(result.accept01.reason, "adapter-fake-host evidence present; excluded");
-  throwsCode(() => ledger.recordReceipt("T3", receipt(3, { evidenceSource: "bogus" })), "invalid-transition");
+  throwsCode(
+    () => ledger.recordReceipt("T3", receipt(3, { evidenceSource: "bogus" })),
+    "invalid-transition",
+  );
   ledger.reserveDispatch("T3");
-  throwsCode(() => ledger.recordReceipt("T3", receipt(3, { evidenceSource: "bogus" })), "invalid-receipt");
+  throwsCode(
+    () => ledger.recordReceipt("T3", receipt(3, { evidenceSource: "bogus" })),
+    "invalid-receipt",
+  );
 });
 
 test("ORCH-ACCEPT-01: three dependent standard-spawn tasks with review halt at the owner gate", () => {
   const { ledger } = fresh();
   assert.equal(assessAcceptance(ledger.state(), { gateTaskId: "G1" }).accept01.met, false);
   runToDone(ledger, "T1", 1);
-  runToDone(ledger, "T2", 2);
-  runToDone(ledger, "T3", 3);
+  runToDone(ledger, "T2", 2, 1);
+  runToDone(ledger, "T3", 3, 2);
   const a = assessAcceptance(ledger.state(), { gateTaskId: "G1" });
   assert.equal(a.accept01.met, true);
   assert.equal(a.accept01.haltedAtGate, true);
@@ -428,7 +582,7 @@ test("ORCH-ACCEPT-02: each failure scenario is reported covered only by standard
   ledger.reserveDispatch("U");
   ledger.recordReceipt("U", receipt(4));
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:4", outcome: "ok" });
-  ledger.recordVerification("U", { verdict: "reject", findings: "nope" });
+  ledger.recordVerification("U", { verifier: "verifier-1", verdict: "reject", findings: "nope" });
   const covered = assessAcceptance(ledger.state()).accept02;
   assert.deepEqual(covered, {
     "worker-error": "covered-by-standard-spawn",
@@ -447,7 +601,195 @@ test("admission-unknown counts as interruption only with standard-spawn evidence
   assert.equal(assessAcceptance(resumed.state()).accept02.interrupted, "uncovered");
   const fake = fresh();
   fake.ledger.reserveDispatch("T1");
-  fake.ledger.recordReceipt("T1", receipt(1, { evidenceSource: "adapter-fake-host", resolvedModel: "x" }));
+  fake.ledger.recordReceipt(
+    "T1",
+    receipt(1, { evidenceSource: "adapter-fake-host", resolvedModel: "x" }),
+  );
   assert.equal(assessAcceptance(fake.ledger.state()).accept02["model-unavailable"], "uncovered");
   assert.equal(deriveStatusView(fake.ledger.state()).tasks[0].evidenceSource, "adapter-fake-host");
+});
+
+test("a publisher failure is recoverable: the verified task retries publishing without re-running the worker", () => {
+  const { ledger } = fresh();
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" });
+  ledger.recordVerification("T1", { verifier: "v", verdict: "pass", evidenceRefs: ["e"] });
+  ledger.recordPublisherFailure("T1", "dashboard 503");
+  assert.equal(ledger.state().tasks.get("T1").status, "blocked");
+  ledger.recordPublisherFailure("T1", "still 503");
+  throwsCode(() => ledger.reserveDispatch("T1"), "duplicate-dispatch");
+  ledger.recordDashboardSync("T1", "dash-1");
+  const t = ledger.state().tasks.get("T1");
+  assert.equal(t.status, "done");
+  assert.equal(t.blocker.resolved, true);
+  assert.equal(t.attempts.length, 1);
+});
+
+test("receipt evidenceSource must be explicit", () => {
+  const { ledger } = fresh();
+  ledger.reserveDispatch("T1");
+  const { evidenceSource, ...rest } = receipt(1);
+  assert.equal(evidenceSource, "standard-spawn");
+  throwsCode(() => ledger.recordReceipt("T1", rest), "invalid-receipt");
+});
+
+test("a blocked attempt with a live child accepts its completion and refuses unsafe retry", () => {
+  const { ledger } = fresh();
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1, { resolvedModel: "other-model" }));
+  assert.equal(ledger.state().tasks.get("T1").blocker.code, "model-mismatch");
+  throwsCode(
+    () => ledger.resolveBlocker("T1", { reason: "r", authorizedBy: "c", sideEffectsChecked: true }),
+    "live-child",
+  );
+  throwsCode(
+    () =>
+      ledger.resolveBlocker("T1", {
+        reason: "r",
+        authorizedBy: "c",
+        sideEffectsChecked: true,
+        childStatus: "terminal",
+      }),
+    "live-child",
+  );
+  throwsCode(
+    () => ledger.deferTask("T1", { approvedBy: "sebastian", ownerDecision: "d" }),
+    "live-child",
+  );
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" });
+  const t = ledger.state().tasks.get("T1");
+  assert.equal(t.status, "blocked");
+  assert.equal(t.attempts[0].completion.outcome, "ok");
+  ledger.resolveBlocker("T1", { reason: "r", authorizedBy: "c", sideEffectsChecked: true });
+  assert.equal(ledger.reserveDispatch("T1"), 2);
+});
+
+test("a live blocked child can be abandoned only with terminal evidence; its late completion is ignored", () => {
+  const { ledger } = fresh();
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1, { resolvedModel: "other-model" }));
+  ledger.resolveBlocker("T1", {
+    reason: "wrong model",
+    authorizedBy: "c",
+    sideEffectsChecked: true,
+    childStatus: "cancelled",
+    childEvidence: "subagents list: run-1 cancelled",
+  });
+  assert.equal(ledger.reserveDispatch("T1"), 2);
+  throwsCode(
+    () => ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" }),
+    "unmatched-completion",
+  );
+  assert.equal(ledger.state().tasks.get("T1").status, "running");
+});
+
+test("deferral is owner-only and limited to pending or blocked tasks", () => {
+  const { ledger } = fresh();
+  throwsCode(
+    () => ledger.deferTask("T1", { approvedBy: "worker", ownerDecision: "d" }),
+    "not-owner",
+  );
+  runToDone(ledger, "T1", 1);
+  throwsCode(
+    () => ledger.deferTask("T1", { approvedBy: "sebastian", ownerDecision: "d" }),
+    "invalid-transition",
+  );
+  ledger.reserveDispatch("T2", {
+    trigger: { type: "completion", childSessionKey: "agent:main:subagent:1" },
+  });
+  throwsCode(
+    () => ledger.deferTask("T2", { approvedBy: "sebastian", ownerDecision: "d" }),
+    "invalid-transition",
+  );
+  const bare = createTaskLedger({ file: fresh().file });
+  throwsCode(() => bare.approveGate("G1", { approvedBy: "x", ref: "r" }), "owners-not-configured");
+});
+
+test("verification needs an identity distinct from the worker", () => {
+  const { ledger } = fresh();
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" });
+  throwsCode(
+    () => ledger.recordVerification("T1", { verdict: "pass", evidenceRefs: ["e"] }),
+    "invalid-verification",
+  );
+  throwsCode(
+    () =>
+      ledger.recordVerification("T1", {
+        verifier: "agent:main:subagent:1",
+        verdict: "pass",
+        evidenceRefs: ["e"],
+      }),
+    "invalid-verification",
+  );
+});
+
+test("dispatch triggers: completion must reference a dependency; owner nudges defeat zero-nudge acceptance", () => {
+  const { ledger } = fresh();
+  runToDone(ledger, "T1", 1);
+  throwsCode(
+    () =>
+      ledger.reserveDispatch("T2", { trigger: { type: "completion", childSessionKey: "nope" } }),
+    "invalid-trigger",
+  );
+  throwsCode(() => ledger.reserveDispatch("T2", { trigger: { type: "bogus" } }), "invalid-trigger");
+  ledger.reserveDispatch("T2", { trigger: { type: "owner-nudge", ref: "msg-continue" } });
+  ledger.recordReceipt("T2", receipt(2));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:2", outcome: "ok" });
+  ledger.recordVerification("T2", { verifier: "v", verdict: "pass", evidenceRefs: ["e"] });
+  ledger.recordDashboardSync("T2", "d");
+  runToDone(ledger, "T3", 3, 2);
+  const a = assessAcceptance(ledger.state(), { gateTaskId: "G1" }).accept01;
+  assert.equal(a.ownerNudges, 1);
+  assert.equal(a.zeroNudge, false);
+  assert.equal(a.met, false);
+  ledger.recordOwnerNudge("msg-2");
+  assert.equal(ledger.state().nudges.length, 2);
+});
+
+test("a stale lock from a dead local process is recovered; a live or foreign lock is not", () => {
+  const { file, ledger } = fresh();
+  writeFileSync(`${file}.lock`, JSON.stringify({ pid: 2 ** 22 + 12345, host: hostname() }));
+  assert.equal(ledger.reserveDispatch("T1"), 1);
+  writeFileSync(`${file}.lock`, JSON.stringify({ pid: process.pid, host: hostname() }));
+  throwsCode(() => ledger.recordQueued("T1"), "ledger-busy");
+  writeFileSync(`${file}.lock`, JSON.stringify({ pid: 2 ** 22 + 12345, host: "elsewhere" }));
+  throwsCode(() => ledger.recordQueued("T1"), "ledger-busy");
+});
+
+test("plugin registers a read-only owner-only ledger status tool only when configured", async () => {
+  const { createLedgerToolFactory, normalizeLedgerConfig, LEDGER_TOOL_NAME } =
+    await import("../src/ledger-tool.js");
+  const plugin = (await import("../src/plugin.js")).default;
+  assert.equal(normalizeLedgerConfig(undefined), undefined);
+  assert.throws(() => normalizeLedgerConfig({ file: "rel" }), TypeError);
+  assert.throws(() => normalizeLedgerConfig({ file: "/a", x: 1 }), TypeError);
+  const reg = [];
+  const api = (pluginConfig) => ({
+    pluginConfig,
+    logger: {},
+    on() {},
+    registerTool: (...a) => reg.push(a),
+    runtime: { subagent: {} },
+  });
+  plugin.register(api({ enabled: true }));
+  assert.equal(reg.length, 0);
+  const { file, ledger } = fresh();
+  plugin.register(api({ enabled: true, ledger: { file } }));
+  assert.deepEqual(reg[0][1], { name: LEDGER_TOOL_NAME, optional: true });
+  const factory = createLedgerToolFactory({ limits: { file } });
+  assert.equal(factory({ senderIsOwner: false }), null);
+  assert.equal(factory({ senderIsOwner: true, sandboxed: true }), null);
+  const before = ledger.integrity().events;
+  const tool = factory({ senderIsOwner: true });
+  const out = await tool.execute("c1", { gateTaskId: "G1" });
+  assert.equal(out.details.ok, true);
+  assert.equal(out.details.view.tasks.length, 4);
+  assert.equal(ledger.integrity().events, before);
+  const bad = await createLedgerToolFactory({ limits: { file: `${file}.missing/x` } })({
+    senderIsOwner: true,
+  }).execute("c2", {});
+  assert.equal(bad.details.view.planId, null);
 });

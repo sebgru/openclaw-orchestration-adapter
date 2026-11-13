@@ -53,7 +53,14 @@ test("doc records documented limits", () => {
 });
 
 test("documents the durable ledger limits and the no-bypass rules", () => {
-  for (const s of ["reserveDispatch", "admission-unknown", "adapter-fake-host", "recordDashboardSync", "never advances the task", "cannot cancel a running worker"]) {
+  for (const s of [
+    "reserveDispatch",
+    "admission-unknown",
+    "adapter-fake-host",
+    "recordDashboardSync",
+    "never advances the task",
+    "cannot cancel a running worker",
+  ]) {
     assert.ok(doc.includes(s), `missing ${s}`);
   }
 });

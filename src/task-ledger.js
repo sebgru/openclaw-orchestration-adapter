@@ -1,4 +1,15 @@
-import { closeSync, constants, existsSync, fsyncSync, openSync, readFileSync, truncateSync, unlinkSync, writeSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fsyncSync,
+  openSync,
+  readFileSync,
+  truncateSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
+import { hostname } from "node:os";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
@@ -92,7 +103,12 @@ function normalizeTask(t) {
     goal: t.goal,
     successCriteria: [...t.successCriteria],
     dependencies: [...(t.dependencies ?? [])],
-    requestedModel: kind === "worker" ? (nonEmpty(t.requestedModel) ? t.requestedModel : fail(`task ${t.id} needs requestedModel`, "invalid-plan")) : null,
+    requestedModel:
+      kind === "worker"
+        ? nonEmpty(t.requestedModel)
+          ? t.requestedModel
+          : fail(`task ${t.id} needs requestedModel`, "invalid-plan")
+        : null,
     timeoutMs: t.timeoutMs,
     maxAttempts: t.maxAttempts ?? 2,
   };
@@ -113,13 +129,22 @@ function emptyTask(def) {
 }
 
 const openAttempt = (task) => task.attempts.at(-1);
+const liveChild = (att) =>
+  Boolean(att?.receipt?.childSessionKey) && !att.completion && !att.abandoned;
 
 /** Fold ledger events into current task state. Pure: replay is the only source of truth. */
 export function reduceLedger(events) {
-  const state = { planId: null, capability: null, tasks: new Map(), notes: [] };
+  const state = { planId: null, capability: null, tasks: new Map(), notes: [], nudges: [] };
   const block = (task, code, reason, evidenceSource) => {
     task.status = "blocked";
-    task.blocker = { code, reason, resolved: false, evidenceSource: evidenceSource ?? openAttempt(task)?.evidenceSource ?? null };
+    const att = openAttempt(task);
+    task.blocker = {
+      code,
+      reason,
+      resolved: false,
+      evidenceSource: evidenceSource ?? att?.evidenceSource ?? null,
+    };
+    if (att) att.blockerCodes.push(code);
   };
   for (const { type, data, ts } of events) {
     const task = data.taskId ? state.tasks.get(data.taskId) : undefined;
@@ -138,7 +163,21 @@ export function reduceLedger(events) {
       case "dispatch_reserved":
         task.attempt = data.attempt;
         task.status = "running";
-        task.attempts.push({ n: data.attempt, reservedAt: ts, receipt: null, queued: false, completion: null, verification: null, evidenceSource: null, outcome: "reserved" });
+        task.attempts.push({
+          n: data.attempt,
+          reservedAt: ts,
+          receipt: null,
+          queued: false,
+          completion: null,
+          verification: null,
+          evidenceSource: null,
+          outcome: "reserved",
+          blockerCodes: [],
+          trigger: data.trigger ?? null,
+          abandoned: null,
+        });
+        if (data.trigger?.type === "owner-nudge")
+          state.nudges.push({ taskId: data.taskId, ref: data.trigger.ref, ts });
         break;
       case "spawn_receipt":
         att.receipt = data.receipt;
@@ -150,25 +189,49 @@ export function reduceLedger(events) {
         att.queued = true;
         break;
       case "completion_observed":
-        att.completion = { outcome: data.outcome, digest: data.digest ?? null, duplicate: false, at: ts };
+        att.completion = {
+          outcome: data.outcome,
+          digest: data.digest ?? null,
+          duplicate: false,
+          at: ts,
+        };
         att.outcome = data.outcome;
-        if (data.outcome === "ok") task.status = "review-ready";
-        else block(task, OUTCOME_BLOCKER[data.outcome], data.reason ?? data.outcome);
+        if (task.status === "running") {
+          if (data.outcome === "ok") task.status = "review-ready";
+          else block(task, OUTCOME_BLOCKER[data.outcome], data.reason ?? data.outcome);
+        } else if (data.outcome !== "ok") att.blockerCodes.push(OUTCOME_BLOCKER[data.outcome]);
+        break;
+      case "owner_nudge_recorded":
+        state.nudges.push({ taskId: null, ref: data.ref, ts });
         break;
       case "completion_duplicate":
       case "completion_unmatched":
         state.notes.push({ type, ts, ...data });
         break;
       case "verification_recorded":
-        att.verification = { verdict: data.verdict, evidenceRefs: data.evidenceRefs, findings: data.findings ?? null, at: ts };
+        att.verification = {
+          verdict: data.verdict,
+          verifier: data.verifier,
+          evidenceRefs: data.evidenceRefs,
+          findings: data.findings ?? null,
+          at: ts,
+        };
         if (data.verdict === "pass") {
           task.verified = true;
           task.status = "verified";
-        } else block(task, "review-rejected", data.findings ?? "verification rejected", att.evidenceSource);
+        } else
+          block(
+            task,
+            "review-rejected",
+            data.findings ?? "verification rejected",
+            att.evidenceSource,
+          );
         break;
       case "dashboard_synced":
         task.dashboardRef = data.ref;
         task.status = "done";
+        if (task.blocker && !task.blocker.resolved)
+          task.blocker = { ...task.blocker, resolved: true, resolution: "published" };
         break;
       case "publisher_unavailable":
         block(task, "publisher-unavailable", data.reason, att?.evidenceSource);
@@ -183,13 +246,20 @@ export function reduceLedger(events) {
         break;
       case "task_deferred":
         task.status = "deferred";
-        task.deferredBy = data.ownerDecision;
+        task.deferredBy = { ownerDecision: data.ownerDecision, approvedBy: data.approvedBy };
         break;
       case "interruption_reconciled":
         block(task, data.code, data.reason);
         break;
       case "blocker_resolved":
-        task.blocker = { ...task.blocker, resolved: true, resolution: data.reason, authorizedBy: data.authorizedBy };
+        task.blocker = {
+          ...task.blocker,
+          resolved: true,
+          resolution: data.reason,
+          authorizedBy: data.authorizedBy,
+        };
+        if (att && data.childStatus && liveChild(att))
+          att.abandoned = { status: data.childStatus, evidence: data.childEvidence };
         task.verified = false;
         task.status = "pending";
         break;
@@ -211,7 +281,9 @@ export function deriveStatusView(state) {
     if (status === "pending") {
       if (waitingOn.length) {
         status = upstreamBlocked.length ? "blocked-upstream" : "waiting";
-        next = upstreamBlocked.length ? `resolve blocker on ${upstreamBlocked.join(", ")}` : `await ${waitingOn.join(", ")}`;
+        next = upstreamBlocked.length
+          ? `resolve blocker on ${upstreamBlocked.join(", ")}`
+          : `await ${waitingOn.join(", ")}`;
       } else if (t.kind === "gate") {
         status = "gated";
         next = "owner decision required";
@@ -221,10 +293,13 @@ export function deriveStatusView(state) {
       }
     } else if (status === "running") {
       const a = openAttempt(t);
-      next = a.receipt ? "await trusted completion; do not treat queued delivery as completion" : "reconcile admission via subagents before any re-dispatch";
+      next = a.receipt
+        ? "await trusted completion; do not treat queued delivery as completion"
+        : "reconcile admission via subagents before any re-dispatch";
     } else if (status === "review-ready") next = "verify independently against acceptance criteria";
     else if (status === "verified") next = "publish dashboard checkpoint, then mark done";
-    else if (status === "blocked") next = t.blocker.resolved ? "retry" : `resolve ${t.blocker.code}`;
+    else if (status === "blocked")
+      next = t.blocker.resolved ? "retry" : `resolve ${t.blocker.code}`;
     return {
       id: t.id,
       kind: t.kind,
@@ -233,7 +308,14 @@ export function deriveStatusView(state) {
       attempt: t.attempt,
       dependencies: [...t.dependencies],
       waitingOn,
-      blocker: t.blocker && !t.blocker.resolved ? { code: t.blocker.code, reason: t.blocker.reason, evidenceSource: t.blocker.evidenceSource } : null,
+      blocker:
+        t.blocker && !t.blocker.resolved
+          ? {
+              code: t.blocker.code,
+              reason: t.blocker.reason,
+              evidenceSource: t.blocker.evidenceSource,
+            }
+          : null,
       requestedModel: t.requestedModel,
       actualModel: openAttempt(t)?.receipt?.resolvedModel ?? null,
       evidenceSource: openAttempt(t)?.evidenceSource ?? null,
@@ -241,11 +323,18 @@ export function deriveStatusView(state) {
       nextAction: next ?? (status === "done" ? "none" : "owner review"),
     };
   });
-  return { planId: state.planId, tasks: rows, edges: rows.flatMap((r) => r.dependencies.map((d) => [d, r.id])) };
+  return {
+    planId: state.planId,
+    tasks: rows,
+    edges: rows.flatMap((r) => r.dependencies.map((d) => [d, r.id])),
+  };
 }
 
 export function renderStatusMarkdown(view) {
-  const lines = ["| Task | Status | Waiting on | Blocker | Model (req → actual) | Source | Next |", "|---|---|---|---|---|---|---|"];
+  const lines = [
+    "| Task | Status | Waiting on | Blocker | Model (req → actual) | Source | Next |",
+    "|---|---|---|---|---|---|---|",
+  ];
   for (const r of view.tasks) {
     lines.push(
       `| ${r.id} | ${r.status} | ${r.waitingOn.join(", ") || "-"} | ${r.blocker ? `${r.blocker.code}` : "-"} | ${r.requestedModel ?? "-"} → ${r.actualModel ?? "-"} | ${r.evidenceSource ?? "-"} | ${r.nextAction} |`,
@@ -255,44 +344,101 @@ export function renderStatusMarkdown(view) {
 }
 
 /**
- * Evaluate acceptance evidence. Only `standard-spawn` receipts count; adapter
- * fake-host evidence is listed separately and never satisfies either criterion.
+ * Evaluate acceptance evidence from the ledger. Only `standard-spawn` receipts
+ * count; adapter fake-host evidence is listed separately. The ledger cannot see
+ * owner chat, so "zero nudge" means: every dependent dispatch was triggered by a
+ * recorded trusted completion and no owner-nudge was recorded. The coordinator
+ * must record every nudge it receives for that claim to be meaningful.
  */
 export function assessAcceptance(state, { gateTaskId } = {}) {
   const tasks = [...state.tasks.values()];
-  const std = (t) => t.attempts.some((a) => a.evidenceSource === "standard-spawn");
-  const fake = tasks.filter((t) => t.attempts.some((a) => a.evidenceSource === "adapter-fake-host")).map((t) => t.id);
-  const doneStd = tasks.filter((t) => t.kind === "worker" && t.status === "done" && openAttempt(t)?.evidenceSource === "standard-spawn");
+  const fake = tasks
+    .filter((t) => t.attempts.some((a) => a.evidenceSource === "adapter-fake-host"))
+    .map((t) => t.id);
+  const doneStd = tasks.filter(
+    (t) =>
+      t.kind === "worker" &&
+      t.status === "done" &&
+      openAttempt(t)?.evidenceSource === "standard-spawn",
+  );
+  const keyOwner = new Map();
+  for (const t of tasks)
+    for (const a of t.attempts)
+      if (a.receipt?.childSessionKey && a.completion?.outcome === "ok")
+        keyOwner.set(a.receipt.childSessionKey, t.id);
+  const chained = doneStd.filter((t) => {
+    const trig = openAttempt(t).trigger;
+    return (
+      t.dependencies.length > 0 &&
+      trig?.type === "completion" &&
+      t.dependencies.includes(keyOwner.get(trig.childSessionKey))
+    );
+  });
   const dependent = doneStd.filter((t) => t.dependencies.length);
   const review = doneStd.some((t) => t.role === "review");
+  const independentlyVerified = doneStd.every((t) =>
+    nonEmpty(openAttempt(t).verification?.verifier),
+  );
   const gate = gateTaskId ? state.tasks.get(gateTaskId) : undefined;
+  const haltedAtGate =
+    Boolean(gate) &&
+    gate.kind === "gate" &&
+    gate.status === "pending" &&
+    gate.dependencies.every((d) => state.tasks.get(d)?.status === "done");
+  const zeroNudge =
+    state.nudges.length === 0 && dependent.length > 0 && chained.length === dependent.length;
   const accept01 = {
-    met: dependent.length >= 2 && doneStd.length >= 3 && review && gate?.status !== "done" && Boolean(gate) && fake.length === 0,
+    met:
+      doneStd.length >= 3 &&
+      chained.length >= 2 &&
+      review &&
+      independentlyVerified &&
+      haltedAtGate &&
+      zeroNudge &&
+      fake.length === 0,
     standardDoneTasks: doneStd.map((t) => t.id),
-    haltedAtGate: Boolean(gate) && gate.status !== "done",
+    chainedTaskIds: chained.map((t) => t.id),
+    ownerNudges: state.nudges.length,
+    zeroNudge,
+    independentlyVerified,
+    haltedAtGate,
     reason: fake.length ? "adapter-fake-host evidence present; excluded" : undefined,
   };
-  const seen = new Set();
-  for (const t of tasks)
-    for (const a of t.attempts) {
-      if (a.evidenceSource !== "standard-spawn") continue;
-      if (a.outcome === "error") seen.add("worker-error");
-      if (a.outcome === "timeout") seen.add("timeout");
-      if (a.outcome === "aborted") seen.add("interrupted");
-      if (a.verification?.verdict === "reject") seen.add("review-rejected");
-    }
-  for (const t of tasks) if (t.blocker && std(t) && ["model-unavailable", "model-mismatch", "admission-unknown"].includes(t.blocker.code)) seen.add(t.blocker.code === "admission-unknown" ? "interrupted" : "model-unavailable");
-  const scenarios = ["worker-error", "timeout", "model-unavailable", "review-rejected", "interrupted"];
+  const scenarios = {
+    "worker-error": ["worker-error"],
+    timeout: ["timeout"],
+    "model-unavailable": ["model-unavailable"],
+    "review-rejected": ["review-rejected"],
+    interrupted: ["interrupted"],
+  };
+  const stdCodes = new Set(
+    tasks.flatMap((t) =>
+      t.attempts
+        .filter((a) => a.evidenceSource === "standard-spawn")
+        .flatMap((a) => a.blockerCodes),
+    ),
+  );
   return {
     accept01,
-    accept02: Object.fromEntries(scenarios.map((s) => [s, seen.has(s) ? "covered-by-standard-spawn" : "uncovered"])),
+    accept02: Object.fromEntries(
+      Object.entries(scenarios).map(([name, codes]) => [
+        name,
+        codes.some((c) => stdCodes.has(c)) ? "covered-by-standard-spawn" : "uncovered",
+      ]),
+    ),
     fakeHostTaskIds: fake,
   };
 }
 
 /** Append-only, hash-chained, lock-guarded JSONL ledger for standard-spawn orchestration. */
-export function createTaskLedger({ file, now = () => new Date().toISOString(), requireCapability = true } = {}) {
-  if (!nonEmpty(file) || !path.isAbsolute(file)) throw new TypeError("file must be an absolute path");
+export function createTaskLedger({
+  file,
+  now = () => new Date().toISOString(),
+  requireCapability = true,
+  owners = [],
+} = {}) {
+  if (!nonEmpty(file) || !path.isAbsolute(file))
+    throw new TypeError("file must be an absolute path");
   const lockFile = `${file}.lock`;
 
   function load() {
@@ -325,14 +471,49 @@ export function createTaskLedger({ file, now = () => new Date().toISOString(), r
   }
 
   /** `build(state)` validates against replayed state and returns the event data, or throws. */
-  function commit(type, build) {
-    let lock;
-    try {
-      lock = openSync(lockFile, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
-    } catch (e) {
-      if (e.code === "EEXIST") fail("ledger is locked by another writer; inspect before removing the lock", "ledger-busy");
-      throw e;
+  function acquireLock() {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const fd = openSync(
+          lockFile,
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+          0o600,
+        );
+        writeSync(fd, JSON.stringify({ pid: process.pid, host: hostname() }));
+        return fd;
+      } catch (e) {
+        if (e.code !== "EEXIST") throw e;
+        if (attempt === 0 && lockIsStale()) continue;
+        fail("ledger is locked by another writer; inspect before removing the lock", "ledger-busy");
+      }
     }
+  }
+
+  /** A lock is stale only when its owner is provably a dead process on this host. */
+  function lockIsStale() {
+    let info;
+    try {
+      info = JSON.parse(readFileSync(lockFile, "utf8"));
+    } catch {
+      return false;
+    }
+    if (info?.host !== hostname() || !Number.isInteger(info.pid)) return false;
+    try {
+      process.kill(info.pid, 0);
+      return false;
+    } catch (e) {
+      if (e.code !== "ESRCH") return false;
+    }
+    try {
+      unlinkSync(lockFile);
+    } catch {
+      return false;
+    }
+    return true;
+  }
+
+  function commit(type, build) {
+    const lock = acquireLock();
     try {
       const { events, head, tornTail, validBytes } = load();
       const data = build(reduceLedger(events));
@@ -353,10 +534,25 @@ export function createTaskLedger({ file, now = () => new Date().toISOString(), r
     }
   }
 
+  const requireOwner = (who) => {
+    if (!owners.length)
+      fail(
+        "no owner identities configured; owner decisions cannot be recorded",
+        "owners-not-configured",
+      );
+    if (!nonEmpty(who) || !owners.includes(who))
+      fail(`${who} is not a configured owner`, "not-owner");
+  };
   const need = (s, id) => s.tasks.get(id) ?? fail(`unknown task ${id}`, "unknown-task");
   const state = () => reduceLedger(load().events);
+  const publishRetryable = (t) =>
+    t.status === "blocked" &&
+    t.verified &&
+    t.blocker?.code === "publisher-unavailable" &&
+    !t.blocker.resolved;
   const needAttempt = (t, wantStatus) => {
-    if (t.status !== wantStatus) fail(`${t.id} is ${t.status}, expected ${wantStatus}`, "invalid-transition");
+    if (t.status !== wantStatus)
+      fail(`${t.id} is ${t.status}, expected ${wantStatus}`, "invalid-transition");
     return openAttempt(t);
   };
 
@@ -384,30 +580,73 @@ export function createTaskLedger({ file, now = () => new Date().toISOString(), r
       const def = normalizeTask(task);
       return commit("task_added", (s) => {
         if (s.tasks.has(def.id)) fail(`duplicate task id: ${def.id}`, "invalid-plan");
-        validateDag([...[...s.tasks.values()].map((t) => ({ id: t.id, dependencies: t.dependencies })), def]);
+        validateDag([
+          ...[...s.tasks.values()].map((t) => ({ id: t.id, dependencies: t.dependencies })),
+          def,
+        ]);
         return { task: def };
       });
     },
 
     recordCapability(input) {
-      return commit("capability_recorded", () => ({ capability: assessContinuationCapability(input) }));
+      return commit("capability_recorded", () => ({
+        capability: assessContinuationCapability(input),
+      }));
     },
 
     /** Durably reserve an attempt BEFORE calling sessions_spawn; returns the attempt number. */
-    reserveDispatch(taskId) {
+    reserveDispatch(taskId, { trigger } = {}) {
       let attempt;
       commit("dispatch_reserved", (s) => {
         const t = need(s, taskId);
-        if (t.kind !== "worker") fail(`${taskId} is an owner gate, not dispatchable`, "not-dispatchable");
+        if (t.kind !== "worker")
+          fail(`${taskId} is an owner gate, not dispatchable`, "not-dispatchable");
         if (requireCapability && !s.capability?.canDispatch)
-          fail("continuation capability not evidenced; record tools actually available to the parent", "capability-missing");
-        if (t.status !== "pending") fail(`${taskId} is ${t.status}; duplicate dispatch refused`, "duplicate-dispatch");
+          fail(
+            "continuation capability not evidenced; record tools actually available to the parent",
+            "capability-missing",
+          );
+        if (t.status !== "pending")
+          fail(`${taskId} is ${t.status}; duplicate dispatch refused`, "duplicate-dispatch");
         const unmet = t.dependencies.filter((d) => s.tasks.get(d).status !== "done");
         if (unmet.length) fail(`${taskId} waits on ${unmet.join(", ")}`, "dependency-unmet");
-        if (t.attempt >= t.maxAttempts) fail(`${taskId} exhausted its ${t.maxAttempts} attempts`, "attempts-exhausted");
-        if (t.attempt > 0 && !t.blocker?.resolved) fail(`${taskId} retry needs an explicit resolved blocker`, "blocker-unresolved");
+        if (t.attempt >= t.maxAttempts)
+          fail(`${taskId} exhausted its ${t.maxAttempts} attempts`, "attempts-exhausted");
+        if (t.attempt > 0 && !t.blocker?.resolved)
+          fail(`${taskId} retry needs an explicit resolved blocker`, "blocker-unresolved");
+        if (t.attempt > 0 && liveChild(openAttempt(t)))
+          fail(
+            `${taskId} prior attempt has a live child; retry would duplicate execution`,
+            "live-child",
+          );
+        let recorded = null;
+        if (trigger !== undefined) {
+          if (trigger?.type === "initial" && !t.dependencies.length) recorded = { type: "initial" };
+          else if (trigger?.type === "retry" && t.attempt > 0) recorded = { type: "retry" };
+          else if (trigger?.type === "owner-nudge" && nonEmpty(trigger.ref))
+            recorded = { type: "owner-nudge", ref: trigger.ref };
+          else if (trigger?.type === "completion") {
+            const src = [...s.tasks.values()].find(
+              (x) =>
+                t.dependencies.includes(x.id) &&
+                x.attempts.some(
+                  (a) => a.receipt?.childSessionKey === trigger.childSessionKey && a.completion,
+                ),
+            );
+            if (!src)
+              fail(
+                "completion trigger must reference a recorded completion of a dependency",
+                "invalid-trigger",
+              );
+            recorded = {
+              type: "completion",
+              childSessionKey: trigger.childSessionKey,
+              fromTask: src.id,
+            };
+          } else fail("invalid dispatch trigger", "invalid-trigger");
+        }
         attempt = t.attempt + 1;
-        return { taskId, attempt };
+        return { taskId, attempt, trigger: recorded };
       });
       return attempt;
     },
@@ -418,8 +657,9 @@ export function createTaskLedger({ file, now = () => new Date().toISOString(), r
         const t = need(s, taskId);
         const a = needAttempt(t, "running");
         if (a.receipt) fail(`${taskId} attempt ${a.n} already has a receipt`, "duplicate-receipt");
-        const evidenceSource = input.evidenceSource ?? "standard-spawn";
-        if (!EVIDENCE_SOURCES.includes(evidenceSource)) fail("unknown evidenceSource", "invalid-receipt");
+        const evidenceSource = input.evidenceSource;
+        if (!EVIDENCE_SOURCES.includes(evidenceSource))
+          fail("receipt needs an explicit evidenceSource", "invalid-receipt");
         const receipt = {
           evidenceSource,
           runId: input.runId ?? null,
@@ -431,11 +671,21 @@ export function createTaskLedger({ file, now = () => new Date().toISOString(), r
           requestedTimeoutMs: t.timeoutMs,
         };
         let problem;
-        const missing = ["runId", "childSessionKey", "resolvedModel", "resolvedProvider"].filter((k) => !nonEmpty(receipt[k]));
-        if (input.unavailable) problem = { code: "model-unavailable", reason: String(input.unavailable) };
-        else if (missing.length) problem = { code: "receipt-incomplete", reason: `missing ${missing.join(", ")}` };
-        else if (`${receipt.resolvedProvider}/${receipt.resolvedModel}` !== t.requestedModel && receipt.resolvedModel !== t.requestedModel)
-          problem = { code: "model-mismatch", reason: `requested ${t.requestedModel}, receipt ${receipt.resolvedProvider}/${receipt.resolvedModel}` };
+        const missing = ["runId", "childSessionKey", "resolvedModel", "resolvedProvider"].filter(
+          (k) => !nonEmpty(receipt[k]),
+        );
+        if (input.unavailable)
+          problem = { code: "model-unavailable", reason: String(input.unavailable) };
+        else if (missing.length)
+          problem = { code: "receipt-incomplete", reason: `missing ${missing.join(", ")}` };
+        else if (
+          `${receipt.resolvedProvider}/${receipt.resolvedModel}` !== t.requestedModel &&
+          receipt.resolvedModel !== t.requestedModel
+        )
+          problem = {
+            code: "model-mismatch",
+            reason: `requested ${t.requestedModel}, receipt ${receipt.resolvedProvider}/${receipt.resolvedModel}`,
+          };
         return { taskId, receipt, problem };
       });
     },
@@ -450,43 +700,73 @@ export function createTaskLedger({ file, now = () => new Date().toISOString(), r
 
     /** Record a trusted completion envelope; identity is matched on childSessionKey, not worker text. */
     recordCompletion({ childSessionKey, outcome, digest, reason }) {
-      const find = (s) => [...s.tasks.values()].find((x) => x.attempts.some((a) => a.receipt?.childSessionKey === childSessionKey));
-      const pre = find(state());
+      const locate = (s) => {
+        for (const t of s.tasks.values()) {
+          const a = t.attempts.find((x) => x.receipt?.childSessionKey === childSessionKey);
+          if (a) return { t, a };
+        }
+        return undefined;
+      };
+      const pre = locate(state());
       if (!pre) {
-        commit("completion_unmatched", () => ({ childSessionKey, reason: "no recorded receipt matches" }));
+        commit("completion_unmatched", () => ({
+          childSessionKey,
+          reason: "no recorded receipt matches",
+        }));
         fail("completion matches no recorded receipt; ignored", "unmatched-completion");
       }
-      if (pre.attempts.some((a) => a.receipt?.childSessionKey === childSessionKey && a.completion)) {
-        commit("completion_duplicate", () => ({ taskId: pre.id, childSessionKey }));
-        fail(`duplicate completion for ${pre.id}`, "duplicate-completion");
+      if (pre.a.completion) {
+        commit("completion_duplicate", () => ({ taskId: pre.t.id, childSessionKey }));
+        fail(`duplicate completion for ${pre.t.id}`, "duplicate-completion");
+      }
+      if (pre.a.abandoned) {
+        commit("completion_unmatched", () => ({
+          childSessionKey,
+          taskId: pre.t.id,
+          reason: "attempt was abandoned by an owner-authorized resolution",
+        }));
+        fail(`attempt for ${pre.t.id} was abandoned; completion ignored`, "unmatched-completion");
       }
       return commit("completion_observed", (s) => {
-        const t = find(s);
-        if (!["ok", "error", "timeout", "aborted"].includes(outcome)) fail("unknown outcome", "invalid-completion");
-        if (t.status !== "running" || openAttempt(t).receipt?.childSessionKey !== childSessionKey)
+        const { t, a } = locate(s);
+        if (!["ok", "error", "timeout", "aborted"].includes(outcome))
+          fail("unknown outcome", "invalid-completion");
+        // A blocked attempt (e.g. receipt mismatch) can still have a live child; its completion is recorded but never unblocks.
+        if (!["running", "blocked"].includes(t.status) || openAttempt(t) !== a)
           fail(`${t.id} is ${t.status}; stale completion not accepted`, "invalid-transition");
         return { taskId: t.id, outcome, digest, reason };
       });
     },
 
-    recordVerification(taskId, { verdict, evidenceRefs, findings }) {
+    recordVerification(taskId, { verdict, evidenceRefs, findings, verifier }) {
       return commit("verification_recorded", (s) => {
-        needAttempt(need(s, taskId), "review-ready");
-        if (!["pass", "reject"].includes(verdict)) fail("verdict must be pass or reject", "invalid-verification");
+        const a = needAttempt(need(s, taskId), "review-ready");
+        if (!nonEmpty(verifier))
+          fail("verification needs a verifier identity", "invalid-verification");
+        if ([a.receipt?.childSessionKey, a.receipt?.runId].includes(verifier))
+          fail("a worker cannot verify its own result", "invalid-verification");
+        if (!["pass", "reject"].includes(verdict))
+          fail("verdict must be pass or reject", "invalid-verification");
         if (verdict === "pass" && !(Array.isArray(evidenceRefs) && evidenceRefs.length))
           fail("a pass requires fresh evidence references", "invalid-verification");
-        if (verdict === "reject" && !nonEmpty(findings)) fail("a rejection records findings", "invalid-verification");
-        return { taskId, verdict, evidenceRefs: evidenceRefs ?? [], findings };
+        if (verdict === "reject" && !nonEmpty(findings))
+          fail("a rejection records findings", "invalid-verification");
+        return { taskId, verdict, verifier, evidenceRefs: evidenceRefs ?? [], findings };
       });
     },
 
     /** Done requires a verified result AND a confirmed dashboard checkpoint; no other path exists. */
     recordDashboardSync(taskId, ref) {
       return commit("dashboard_synced", (s) => {
-        needAttempt(need(s, taskId), "verified");
-        if (!nonEmpty(ref)) fail("dashboard sync needs a confirmation reference", "invalid-checkpoint");
+        const t = need(s, taskId);
+        if (!publishRetryable(t)) needAttempt(t, "verified");
+        if (!nonEmpty(ref))
+          fail("dashboard sync needs a confirmation reference", "invalid-checkpoint");
         if (requireCapability && !s.capability?.canPublish)
-          fail("no publisher capability evidenced; task cannot be completed", "publisher-unavailable");
+          fail(
+            "no publisher capability evidenced; task cannot be completed",
+            "publisher-unavailable",
+          );
         return { taskId, ref };
       });
     },
@@ -494,49 +774,87 @@ export function createTaskLedger({ file, now = () => new Date().toISOString(), r
     /** Record that the publisher failed; the task stays incomplete and visibly blocked. */
     recordPublisherFailure(taskId, reason) {
       return commit("publisher_unavailable", (s) => {
-        needAttempt(need(s, taskId), "verified");
+        const t = need(s, taskId);
+        if (!publishRetryable(t)) needAttempt(t, "verified");
         return { taskId, reason: reason ?? "publisher unavailable" };
       });
     },
 
     approveGate(taskId, { approvedBy, ref }) {
+      requireOwner(approvedBy);
       return commit("gate_approved", (s) => {
         const t = need(s, taskId);
-        if (t.kind !== "gate" || t.status !== "pending") fail(`${taskId} is not an open owner gate`, "invalid-transition");
+        if (t.kind !== "gate" || t.status !== "pending")
+          fail(`${taskId} is not an open owner gate`, "invalid-transition");
         const unmet = t.dependencies.filter((d) => s.tasks.get(d).status !== "done");
         if (unmet.length) fail(`gate ${taskId} waits on ${unmet.join(", ")}`, "dependency-unmet");
-        if (!nonEmpty(approvedBy) || !nonEmpty(ref)) fail("gate approval needs approver and reference", "invalid-gate");
+        if (!nonEmpty(approvedBy) || !nonEmpty(ref))
+          fail("gate approval needs approver and reference", "invalid-gate");
         return { taskId, approvedBy, ref };
       });
     },
 
-    rejectGate(taskId, reason) {
+    rejectGate(taskId, reason, { rejectedBy } = {}) {
+      requireOwner(rejectedBy);
       return commit("gate_rejected", (s) => {
         const t = need(s, taskId);
-        if (t.kind !== "gate" || t.status !== "pending") fail(`${taskId} is not an open owner gate`, "invalid-transition");
+        if (t.kind !== "gate" || t.status !== "pending")
+          fail(`${taskId} is not an open owner gate`, "invalid-transition");
         return { taskId, reason: reason ?? "gate rejected" };
       });
     },
 
-    deferTask(taskId, ownerDecision) {
+    deferTask(taskId, { ownerDecision, approvedBy } = {}) {
+      requireOwner(approvedBy);
       return commit("task_deferred", (s) => {
-        need(s, taskId);
-        if (!nonEmpty(ownerDecision)) fail("deferral requires an owner decision reference", "invalid-deferral");
-        return { taskId, ownerDecision };
+        const t = need(s, taskId);
+        if (!nonEmpty(ownerDecision))
+          fail("deferral requires an owner decision reference", "invalid-deferral");
+        if (!["pending", "blocked"].includes(t.status))
+          fail(
+            `${taskId} is ${t.status}; only pending or blocked tasks can be deferred`,
+            "invalid-transition",
+          );
+        if (liveChild(openAttempt(t)))
+          fail(`${taskId} has a live child; resolve it before deferral`, "live-child");
+        return { taskId, ownerDecision, approvedBy };
       });
     },
 
     /** Reopen a blocked task for a retry only after the side effects were inspected. */
-    resolveBlocker(taskId, { reason, authorizedBy, sideEffectsChecked }) {
+    resolveBlocker(
+      taskId,
+      { reason, authorizedBy, sideEffectsChecked, childStatus, childEvidence },
+    ) {
       return commit("blocker_resolved", (s) => {
         const t = need(s, taskId);
-        if (t.status !== "blocked" || t.blocker.resolved) fail(`${taskId} has no open blocker`, "invalid-transition");
-        if (!nonEmpty(reason) || !nonEmpty(authorizedBy)) fail("resolution needs reason and authorizedBy", "invalid-resolution");
+        if (t.status !== "blocked" || t.blocker.resolved)
+          fail(`${taskId} has no open blocker`, "invalid-transition");
+        if (!nonEmpty(reason) || !nonEmpty(authorizedBy))
+          fail("resolution needs reason and authorizedBy", "invalid-resolution");
         if (sideEffectsChecked !== true && t.kind === "worker" && openAttempt(t))
           fail("confirm side effects of the prior attempt were inspected", "invalid-resolution");
-        if (t.blocker.code === "publisher-unavailable") fail("publisher-unavailable is cleared by recordDashboardSync, not resolveBlocker", "invalid-resolution");
+        if (t.blocker.code === "publisher-unavailable")
+          fail(
+            "publisher-unavailable is cleared by recordDashboardSync, not resolveBlocker",
+            "invalid-resolution",
+          );
+        if (liveChild(openAttempt(t))) {
+          if (!["terminal", "cancelled"].includes(childStatus) || !nonEmpty(childEvidence))
+            fail(
+              "the blocked attempt still has a live child; confirm via subagents that it is terminal or cancelled and cite the evidence",
+              "live-child",
+            );
+          return { taskId, reason, authorizedBy, childStatus, childEvidence };
+        }
         return { taskId, reason, authorizedBy };
       });
+    },
+
+    /** Record an owner nudge so zero-nudge acceptance cannot pass silently. */
+    recordOwnerNudge(ref) {
+      if (!nonEmpty(ref)) fail("nudge needs a reference", "invalid-nudge");
+      return commit("owner_nudge_recorded", () => ({ ref }));
     },
 
     /**
@@ -557,9 +875,15 @@ export function createTaskLedger({ file, now = () => new Date().toISOString(), r
             reason: `attempt ${a.n} reserved without a spawn receipt; inspect subagents for a matching run before any retry`,
           }));
           flagged.push({ taskId: t.id, action: "inspect-admission" });
-        } else if (t.status === "running") flagged.push({ taskId: t.id, action: "await-completion", childSessionKey: a.receipt.childSessionKey });
+        } else if (t.status === "running")
+          flagged.push({
+            taskId: t.id,
+            action: "await-completion",
+            childSessionKey: a.receipt.childSessionKey,
+          });
         else if (t.status === "review-ready") flagged.push({ taskId: t.id, action: "verify" });
-        else if (t.status === "verified") flagged.push({ taskId: t.id, action: "publish-checkpoint" });
+        else if (t.status === "verified")
+          flagged.push({ taskId: t.id, action: "publish-checkpoint" });
       }
       return { state: s, flagged };
     },

@@ -4,6 +4,7 @@ import {
   normalizeDispatchConfig,
 } from "./agent-tool.js";
 import { PLAN_TOOL_NAME, createPlanToolFactory, normalizePlanConfig } from "./plan-tool.js";
+import { LEDGER_TOOL_NAME, createLedgerToolFactory, normalizeLedgerConfig } from "./ledger-tool.js";
 import { CANARY_TOOL_NAME, createCanaryToolFactory } from "./canary-tool.js";
 import { dispatchReadyBatch, dispatchTask } from "./dispatch.js";
 import {
@@ -97,6 +98,7 @@ export function registerOrchestration(
     workerRoutes,
     dispatch,
     canary = false,
+    ledger,
     lifecycleDiagnostics = false,
   } = {},
 ) {
@@ -169,6 +171,14 @@ export function registerOrchestration(
     if (typeof api.registerTool !== "function") throw new TypeError("api.registerTool required");
     api.registerTool(createCanaryToolFactory(), { name: CANARY_TOOL_NAME, optional: true });
   }
+  const ledgerLimits = normalizeLedgerConfig(ledger);
+  if (ledgerLimits) {
+    if (typeof api.registerTool !== "function") throw new TypeError("api.registerTool required");
+    api.registerTool(createLedgerToolFactory({ limits: ledgerLimits }), {
+      name: LEDGER_TOOL_NAME,
+      optional: true,
+    });
+  }
   handles.set(api, handle);
   return handle;
 }
@@ -190,6 +200,7 @@ export default {
       workerRoutes: api.pluginConfig.workerRoutes,
       dispatch: api.pluginConfig.dispatch,
       canary: api.pluginConfig.canary === true,
+      ledger: api.pluginConfig.ledger,
       lifecycleDiagnostics: api.pluginConfig.lifecycleDiagnostics === true,
     });
   },

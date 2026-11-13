@@ -76,6 +76,7 @@ test("tool is registered once as optional only when dispatch config exists", () 
     DISPATCH_TOOL_NAME,
     "orchestration_run_plan",
     "orchestration_canary",
+    "orchestration_ledger_status",
   ]);
   assert.equal(manifest.toolMetadata[DISPATCH_TOOL_NAME].optional, true);
 });
