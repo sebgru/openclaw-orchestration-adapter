@@ -1492,3 +1492,55 @@ test("bound dependent review dispatches at review-ready while other dependencies
   ledger.recordDashboardSync("T1", "dashboard");
   assert.equal(ledger.state().tasks.get("T1").status, "done");
 });
+
+test("readiness schedules a bound review only when its other dependencies are done", () => {
+  const { ledger } = fresh();
+  ledger.addTask(task("Other"));
+  ledger.addTask(task("ReviewDependent", { role: "review", dependencies: ["T1", "Other"] }));
+  const row = () => ledger.view().tasks.find((t) => t.id === "ReviewDependent");
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1));
+  ledger.recordCompletion({
+    childSessionKey: "agent:main:subagent:1",
+    outcome: "ok",
+    digest: "artifact",
+  });
+  assert.equal(row().status, "waiting");
+  assert.equal(row().reviewBinding, null);
+  runToDone(ledger, "Other", 8);
+  const ready = row();
+  assert.equal(ready.status, "ready");
+  assert.deepEqual(ready.waitingOn, ["T1"]);
+  assert.deepEqual(ready.reviewBinding, { taskId: "T1", attempt: 1, digest: "artifact" });
+  assert.match(
+    renderStatusMarkdown(ledger.view()),
+    /dispatch with review binding for T1 attempt 1 digest artifact/,
+  );
+  assert.equal(ledger.view().tasks.find((t) => t.id === "T2").status, "waiting");
+  throwsCode(() => ledger.reserveDispatch("ReviewDependent"), "dependency-unmet");
+  ledger.reserveDispatch(ready.id, { reviewBinding: ready.reviewBinding });
+  assert.equal(row().status, "running");
+});
+
+test("reviewer owner exclusion checks both identifiers, regardless of verifier identifier", () => {
+  for (const [owner, verifier] of [
+    ["run-9", "agent:main:subagent:9"],
+    ["agent:main:subagent:9", "run-9"],
+  ]) {
+    const { ledger } = fresh({ owners: [owner] });
+    rejectedWith(ledger, verifier, { reviewerKind: "agent" });
+    const result = ledger.state().tasks.get("T2");
+    assert.equal(result.attempts[0].verification.reviewProvenance, "unverified");
+    assert.equal(result.blocker.ownerRequired, true);
+    throwsCode(
+      () =>
+        ledger.resolveBlocker("T2", {
+          reason: "fix",
+          authorizedBy: "coordinator",
+          sideEffectsChecked: true,
+          correctionScope: "fix",
+        }),
+      "not-owner",
+    );
+  }
+});

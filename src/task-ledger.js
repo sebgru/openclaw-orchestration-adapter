@@ -290,10 +290,24 @@ export function deriveStatusView(state) {
   const rows = [...state.tasks.values()].map((t) => {
     const waitingOn = t.dependencies.filter((d) => !done(d));
     const upstreamBlocked = waitingOn.filter((d) => state.tasks.get(d).status === "blocked");
+    // A single review-ready dependency can be consumed only with its exact
+    // current artifact binding; all other dependencies must already be done.
+    const target =
+      t.kind === "worker" && t.role === "review" && waitingOn.length === 1
+        ? state.tasks.get(waitingOn[0])
+        : null;
+    const targetAttempt = target && openAttempt(target);
+    const reviewBinding =
+      target?.status === "review-ready" && nonEmpty(targetAttempt?.completion?.digest)
+        ? { taskId: target.id, attempt: targetAttempt.n, digest: targetAttempt.completion.digest }
+        : null;
     let status = t.status;
     let next;
     if (status === "pending") {
-      if (waitingOn.length) {
+      if (reviewBinding) {
+        status = "ready";
+        next = `dispatch with review binding for ${reviewBinding.taskId} attempt ${reviewBinding.attempt} digest ${reviewBinding.digest}`;
+      } else if (waitingOn.length) {
         status = upstreamBlocked.length ? "blocked-upstream" : "waiting";
         next = upstreamBlocked.length
           ? `resolve blocker on ${upstreamBlocked.join(", ")}`
@@ -327,6 +341,7 @@ export function deriveStatusView(state) {
       attempt: t.attempt,
       dependencies: [...t.dependencies],
       waitingOn,
+      reviewBinding: status === "ready" ? reviewBinding : null,
       blocker:
         t.blocker && !t.blocker.resolved
           ? {
@@ -960,7 +975,11 @@ export function createTaskLedger({
               ),
           );
         const reviewProvenance =
-          reviewerKind === "agent" && independent && !owners.includes(verifier)
+          reviewerKind === "agent" &&
+          independent &&
+          ![matches[0].receipt?.childSessionKey, matches[0].receipt?.runId].some((id) =>
+            owners.includes(id),
+          )
             ? "independent-agent"
             : "unverified";
         if (
