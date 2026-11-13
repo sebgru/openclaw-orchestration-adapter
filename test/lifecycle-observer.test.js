@@ -25,7 +25,10 @@ const setup = () => {
       },
     ],
   });
-  ledger.recordCapability({ tools: ["sessions_spawn", "sessions_yield", "subagents", "dashboard"], publisherTool: "dashboard" });
+  ledger.recordCapability({
+    tools: ["sessions_spawn", "sessions_yield", "subagents", "dashboard"],
+    publisherTool: "dashboard",
+  });
   ledger.reserveDispatch("T1");
   ledger.recordReceipt("T1", {
     evidenceSource: "standard-spawn",
@@ -42,7 +45,10 @@ test("observer records sanitized host events and ignores events without identity
   const obs = createLifecycleObserver({ file: obsFile });
   assert.equal(obs.observeSpawned({}), false);
   assert.equal(obs.observeEnded(undefined), false);
-  assert.equal(obs.observeSpawned({ runId: "run-1", childSessionKey: CHILD, label: "x".repeat(999) }), true);
+  assert.equal(
+    obs.observeSpawned({ runId: "run-1", childSessionKey: CHILD, label: "x".repeat(999) }),
+    true,
+  );
   assert.equal(obs.observeEnded({ targetSessionKey: CHILD, runId: "run-1", outcome: "ok" }), true);
   appendFileSync(obsFile, '{"torn"');
   const rows = obs.read();
@@ -68,17 +74,29 @@ test("reconcile reports a host-ended child the ledger never recorded, and mismat
   const state = ledger.state();
   assert.deepEqual(reconcileObservations(state, []), []);
   assert.deepEqual(reconcileObservations(state, [{ kind: "spawned" }]), []);
-  const spawned = { kind: "spawned", childSessionKey: CHILD, runId: "run-1", resolvedModel: "claude-sonnet-5-5", resolvedProvider: "anthropic" };
+  const spawned = {
+    kind: "spawned",
+    childSessionKey: CHILD,
+    runId: "run-1",
+    resolvedModel: "claude-sonnet-5-5",
+    resolvedProvider: "anthropic",
+  };
   assert.deepEqual(reconcileObservations(state, [spawned]), []);
   let f = reconcileObservations(state, [
     { ...spawned, runId: "other", resolvedModel: "gpt" },
     { kind: "ended", childSessionKey: CHILD, outcome: "ok" },
   ]);
-  assert.deepEqual(f.map((x) => x.code), ["host-receipt-mismatch", "host-receipt-mismatch", "host-ended-unrecorded"]);
+  assert.deepEqual(
+    f.map((x) => x.code),
+    ["host-receipt-mismatch", "host-receipt-mismatch", "host-ended-unrecorded"],
+  );
   assert.match(f[2].nextAction, /recordCompletion/);
   ledger.recordCompletion({ childSessionKey: CHILD, outcome: "ok" });
   const done = ledger.state();
-  assert.deepEqual(reconcileObservations(done, [{ kind: "ended", childSessionKey: CHILD, outcome: "ok" }]), []);
+  assert.deepEqual(
+    reconcileObservations(done, [{ kind: "ended", childSessionKey: CHILD, outcome: "ok" }]),
+    [],
+  );
   assert.deepEqual(reconcileObservations(done, [{ kind: "ended", childSessionKey: CHILD }]), []);
   f = reconcileObservations(done, [{ kind: "ended", childSessionKey: CHILD, outcome: "timeout" }]);
   assert.equal(f[0].code, "host-outcome-mismatch");
@@ -103,8 +121,29 @@ test("plugin registers subagent hooks only with ledger.observe and the status to
   hooks.subagent_ended({ targetSessionKey: CHILD, runId: "run-1", outcome: "ok" });
   const limits = normalizeLedgerConfig({ file, observe: true });
   const out = await createLedgerToolFactory({ limits })({ senderIsOwner: true }).execute("c", {});
-  assert.deepEqual(out.details.hostObserved.map((x) => x.code), ["host-ended-unrecorded"]);
-  const plain = await createLedgerToolFactory({ limits: normalizeLedgerConfig({ file }) })({ senderIsOwner: true }).execute("c", {});
+  assert.deepEqual(
+    out.details.hostObserved.map((x) => x.code),
+    ["host-ended-unrecorded"],
+  );
+  const plain = await createLedgerToolFactory({ limits: normalizeLedgerConfig({ file }) })({
+    senderIsOwner: true,
+  }).execute("c", {});
   assert.equal(plain.details.hostObserved, null);
   assert.ok(obsFile);
+});
+
+test("observer log is owner-only, maps host outcomes, and reports truncation", async () => {
+  const { statSync } = await import("node:fs");
+  const { obsFile, ledger } = setup();
+  const obs = createLifecycleObserver({ file: obsFile });
+  obs.observeSpawned({ childSessionKey: CHILD, runId: "run-1" });
+  assert.equal(statSync(obsFile).mode & 0o077, 0);
+  obs.observeEnded({ targetSessionKey: CHILD, outcome: "killed" });
+  ledger.recordCompletion({ childSessionKey: CHILD, outcome: "aborted" });
+  assert.deepEqual(reconcileObservations(ledger.state(), obs.read()), []);
+  const cut = reconcileObservations(ledger.state(), [{ kind: "truncated" }]);
+  assert.equal(cut[0].code, "observations-truncated");
+  const unknown = [{ kind: "ended", childSessionKey: CHILD, outcome: "mystery" }];
+  assert.deepEqual(reconcileObservations(ledger.state(), unknown), []);
+  assert.equal(obs.observeSpawned(null), false);
 });

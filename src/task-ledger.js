@@ -10,7 +10,7 @@ import {
   writeSync,
 } from "node:fs";
 import { hostname } from "node:os";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 export const LEDGER_VERSION = 1;
@@ -299,12 +299,17 @@ export function deriveStatusView(state) {
     } else if (status === "review-ready") next = "verify independently against acceptance criteria";
     else if (status === "verified") next = "publish dashboard checkpoint, then mark done";
     else if (status === "blocked")
-      next = t.blocker.resolved ? "retry" : `resolve ${t.blocker.code}`;
+      next = t.blocker.resolved
+        ? "retry"
+        : t.blocker.code === "publisher-unavailable"
+          ? "result is verified; retry the dashboard checkpoint (recordDashboardSync) once the publisher works; do not re-run the worker"
+          : `resolve ${t.blocker.code}`;
     return {
       id: t.id,
       kind: t.kind,
       role: t.role,
       status,
+      verified: t.verified,
       attempt: t.attempt,
       dependencies: [...t.dependencies],
       waitingOn,
@@ -344,13 +349,18 @@ export function renderStatusMarkdown(view) {
 }
 
 /**
- * Evaluate acceptance evidence from the ledger. Only `standard-spawn` receipts
+ * Check whether the ledger's own entries satisfy the ACCEPT-01 criteria. This is
+ * not live acceptance: `evidenceSource` and receipts are coordinator-asserted, so
+ * synthetic or hand-written entries can satisfy it. `hostCorroborated` is true only
+ * when every standard-spawn done task has a matching host-observed spawn and a
+ * non-failing end record (pass `observations` from the lifecycle observer); even
+ * then the owner must review the run log. Only `standard-spawn` receipts
  * count; adapter fake-host evidence is listed separately. The ledger cannot see
  * owner chat, so "zero nudge" means: every dependent dispatch was triggered by a
  * recorded trusted completion and no owner-nudge was recorded. The coordinator
  * must record every nudge it receives for that claim to be meaningful.
  */
-export function assessAcceptance(state, { gateTaskId } = {}) {
+export function assessAcceptance(state, { gateTaskId, observations = [] } = {}) {
   const tasks = [...state.tasks.values()];
   const fake = tasks
     .filter((t) => t.attempts.some((a) => a.evidenceSource === "adapter-fake-host"))
@@ -387,8 +397,23 @@ export function assessAcceptance(state, { gateTaskId } = {}) {
     gate.dependencies.every((d) => state.tasks.get(d)?.status === "done");
   const zeroNudge =
     state.nudges.length === 0 && dependent.length > 0 && chained.length === dependent.length;
+  const seen = new Map();
+  for (const o of observations) {
+    if (!o?.childSessionKey) continue;
+    const e = seen.get(o.childSessionKey) ?? {};
+    if (o.kind === "spawned") e.spawned ??= o;
+    else if (o.kind === "ended") e.ended ??= o;
+    seen.set(o.childSessionKey, e);
+  }
+  const uncorroborated = doneStd
+    .filter((t) => {
+      const r = openAttempt(t).receipt;
+      const e = seen.get(r.childSessionKey);
+      return !(e?.spawned && e.spawned.runId === r.runId && (!e.ended || e.ended.outcome === "ok"));
+    })
+    .map((t) => t.id);
   const accept01 = {
-    met:
+    ledgerCriteriaMet:
       doneStd.length >= 3 &&
       chained.length >= 2 &&
       review &&
@@ -403,6 +428,10 @@ export function assessAcceptance(state, { gateTaskId } = {}) {
     independentlyVerified,
     haltedAtGate,
     reason: fake.length ? "adapter-fake-host evidence present; excluded" : undefined,
+    hostCorroborated: doneStd.length > 0 && uncorroborated.length === 0,
+    uncorroboratedTaskIds: uncorroborated,
+    notice:
+      "Computed from coordinator-written ledger entries; this is not proof of a live standard-spawn run. Owner review of the run log is still required.",
   };
   const scenarios = {
     "worker-error": ["worker-error"],
@@ -436,6 +465,7 @@ export function createTaskLedger({
   now = () => new Date().toISOString(),
   requireCapability = true,
   owners = [],
+  providerAliases = {},
 } = {}) {
   if (!nonEmpty(file) || !path.isAbsolute(file))
     throw new TypeError("file must be an absolute path");
@@ -470,46 +500,84 @@ export function createTaskLedger({
     return { events, head, tornTail, validBytes };
   }
 
-  /** `build(state)` validates against replayed state and returns the event data, or throws. */
+  /**
+   * The lock is created atomically (O_EXCL) and carries a unique token. It is never
+   * removed on a guess: two processes judging the same lock "stale" could each delete
+   * the other's fresh lock. A crashed writer's lock is cleared only by the explicit,
+   * operator-invoked `breakStaleLock`.
+   */
   function acquireLock() {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const fd = openSync(
-          lockFile,
-          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-          0o600,
-        );
-        writeSync(fd, JSON.stringify({ pid: process.pid, host: hostname() }));
-        return fd;
-      } catch (e) {
-        if (e.code !== "EEXIST") throw e;
-        if (attempt === 0 && lockIsStale()) continue;
-        fail("ledger is locked by another writer; inspect before removing the lock", "ledger-busy");
-      }
+    let fd;
+    try {
+      fd = openSync(lockFile, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      fail(
+        "ledger is locked by another writer; use inspectLock() and break the lock only if its writer is gone",
+        "ledger-busy",
+      );
+    }
+    const token = randomUUID();
+    try {
+      writeSync(fd, JSON.stringify({ pid: process.pid, host: hostname(), token }));
+    } catch (e) {
+      releaseLock({ fd, token: null, force: true });
+      throw e;
+    }
+    return { fd, token };
+  }
+
+  /** Release only the lock this writer created; a replaced foreign lock is left alone. */
+  function releaseLock({ fd, token, force = false }) {
+    try {
+      closeSync(fd);
+    } finally {
+      let own = force;
+      if (!own)
+        try {
+          own = JSON.parse(readFileSync(lockFile, "utf8"))?.token === token;
+        } catch {
+          own = false;
+        }
+      if (own)
+        try {
+          unlinkSync(lockFile);
+        } catch (e) {
+          if (e.code !== "ENOENT") throw e;
+        }
     }
   }
 
-  /** A lock is stale only when its owner is provably a dead process on this host. */
-  function lockIsStale() {
-    let info;
+  function inspectLock() {
+    let raw;
     try {
-      info = JSON.parse(readFileSync(lockFile, "utf8"));
-    } catch {
-      return false;
-    }
-    if (info?.host !== hostname() || !Number.isInteger(info.pid)) return false;
-    try {
-      process.kill(info.pid, 0);
-      return false;
+      raw = readFileSync(lockFile, "utf8");
     } catch (e) {
-      if (e.code !== "ESRCH") return false;
+      if (e.code === "ENOENT") return { locked: false };
+      throw e;
     }
+    let info = null;
     try {
-      unlinkSync(lockFile);
+      info = JSON.parse(raw);
     } catch {
-      return false;
+      // unreadable lock content stays "unknown"
     }
-    return true;
+    let writerAlive = "unknown";
+    if (info?.host === hostname() && Number.isInteger(info.pid)) {
+      try {
+        process.kill(info.pid, 0);
+        writerAlive = true;
+      } catch (e) {
+        writerAlive = e.code === "ESRCH" ? false : "unknown";
+      }
+    }
+    return {
+      locked: true,
+      pid: info?.pid ?? null,
+      host: info?.host ?? null,
+      token: info?.token ?? null,
+      writerAlive,
+    };
   }
 
   function commit(type, build) {
@@ -529,9 +597,28 @@ export function createTaskLedger({
       }
       return reduceLedger([...events, body]);
     } finally {
-      closeSync(lock);
-      unlinkSync(lockFile);
+      releaseLock(lock);
     }
+  }
+
+  /**
+   * Compare the receipt with the requested model without substituting. Exact
+   * `provider/model` is the norm; a runtime-specific provider name is accepted
+   * only if the caller configured it in `providerAliases` for that requested provider.
+   */
+  function matchModel(requested, r) {
+    if (`${r.resolvedProvider}/${r.resolvedModel}` === requested) return "exact";
+    const i = requested.indexOf("/");
+    if (i < 0) return r.resolvedModel === requested ? "exact" : null;
+    const [reqProvider, reqModel] = [requested.slice(0, i), requested.slice(i + 1)];
+    const aliases = providerAliases?.[reqProvider];
+    if (
+      r.resolvedModel === reqModel &&
+      Array.isArray(aliases) &&
+      aliases.includes(r.resolvedProvider)
+    )
+      return "provider-alias";
+    return null;
   }
 
   const requireOwner = (who) => {
@@ -560,6 +647,19 @@ export function createTaskLedger({
     state,
     view: () => deriveStatusView(state()),
     events: () => load().events,
+    inspectLock,
+    /** Manual recovery after a crashed writer: only a dead same-host writer, matched by token. */
+    breakStaleLock({ token }) {
+      const info = inspectLock();
+      if (!info.locked) fail("no ledger lock present", "no-lock");
+      if (info.writerAlive !== false || !nonEmpty(token) || info.token !== token)
+        fail(
+          "lock is not provably stale: its writer must be a dead process on this host and the token must match",
+          "lock-not-stale",
+        );
+      unlinkSync(lockFile);
+      return { cleared: true };
+    },
     integrity: () => {
       const { events, tornTail } = load();
       return { events: events.length, tornTail };
@@ -669,6 +769,7 @@ export function createTaskLedger({
           requestedModel: t.requestedModel,
           appliedTimeout: input.appliedTimeout ?? "unconfirmed",
           requestedTimeoutMs: t.timeoutMs,
+          modelMatch: null,
         };
         let problem;
         const missing = ["runId", "childSessionKey", "resolvedModel", "resolvedProvider"].filter(
@@ -678,10 +779,7 @@ export function createTaskLedger({
           problem = { code: "model-unavailable", reason: String(input.unavailable) };
         else if (missing.length)
           problem = { code: "receipt-incomplete", reason: `missing ${missing.join(", ")}` };
-        else if (
-          `${receipt.resolvedProvider}/${receipt.resolvedModel}` !== t.requestedModel &&
-          receipt.resolvedModel !== t.requestedModel
-        )
+        else if (!(receipt.modelMatch = matchModel(t.requestedModel, receipt)))
           problem = {
             code: "model-mismatch",
             reason: `requested ${t.requestedModel}, receipt ${receipt.resolvedProvider}/${receipt.resolvedModel}`,
@@ -882,6 +980,7 @@ export function createTaskLedger({
             childSessionKey: a.receipt.childSessionKey,
           });
         else if (t.status === "review-ready") flagged.push({ taskId: t.id, action: "verify" });
+        else if (publishRetryable(t)) flagged.push({ taskId: t.id, action: "publish-checkpoint" });
         else if (t.status === "verified")
           flagged.push({ taskId: t.id, action: "publish-checkpoint" });
       }

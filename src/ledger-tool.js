@@ -15,7 +15,8 @@ export function normalizeLedgerConfig(config) {
   if (config === null || typeof config !== "object" || Array.isArray(config))
     throw new TypeError("ledger must be an object");
   for (const key of Object.keys(config))
-    if (key !== "file" && key !== "observe") throw new TypeError(`ledger.${key} is not a known setting`);
+    if (key !== "file" && key !== "observe")
+      throw new TypeError(`ledger.${key} is not a known setting`);
   if (typeof config.file !== "string" || !path.isAbsolute(config.file))
     throw new TypeError("ledger.file must be an absolute path");
   if (config.observe !== undefined && typeof config.observe !== "boolean")
@@ -51,17 +52,15 @@ export function createLedgerToolFactory({ limits }) {
           const ledger = createTaskLedger({ file: limits.file });
           const state = ledger.state();
           const view = deriveStatusView(state);
+          const observations = limits.observe
+            ? createLifecycleObserver({ file: limits.observationsFile }).read()
+            : [];
           details = {
             ok: true,
             integrity: ledger.integrity(),
             view,
-            acceptance: assessAcceptance(state, { gateTaskId: params?.gateTaskId }),
-            hostObserved: limits.observe
-              ? reconcileObservations(
-                  state,
-                  createLifecycleObserver({ file: limits.observationsFile }).read(),
-                )
-              : null,
+            acceptance: assessAcceptance(state, { gateTaskId: params?.gateTaskId, observations }),
+            hostObserved: limits.observe ? reconcileObservations(state, observations) : null,
             markdown: renderStatusMarkdown(view),
           };
         } catch (e) {

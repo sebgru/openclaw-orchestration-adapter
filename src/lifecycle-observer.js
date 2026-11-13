@@ -1,5 +1,14 @@
 import { appendFileSync, existsSync, readFileSync, statSync } from "node:fs";
 
+const HOST_OUTCOME = {
+  ok: "ok",
+  error: "error",
+  timeout: "timeout",
+  killed: "aborted",
+  reset: "aborted",
+  deleted: "aborted",
+};
+
 const MAX_BYTES = 1024 * 1024;
 const MAX_FIELD = 256;
 
@@ -13,8 +22,7 @@ const text = (v) => (typeof v === "string" && v.length > 0 ? v.slice(0, MAX_FIEL
  * It observes only; it cannot resume the requester session or spawn work.
  */
 export function createLifecycleObserver({ file, now = () => new Date().toISOString() } = {}) {
-  if (typeof file !== "string" || file.length === 0)
-    throw new TypeError("observer file required");
+  if (typeof file !== "string" || file.length === 0) throw new TypeError("observer file required");
   let full = false;
 
   function append(record) {
@@ -22,10 +30,12 @@ export function createLifecycleObserver({ file, now = () => new Date().toISOStri
     try {
       if (existsSync(file) && statSync(file).size >= MAX_BYTES) {
         full = true;
-        appendFileSync(file, `${JSON.stringify({ kind: "truncated", ts: now() })}\n`);
+        appendFileSync(file, `${JSON.stringify({ kind: "truncated", ts: now() })}\n`, {
+          mode: 0o600,
+        });
         return false;
       }
-      appendFileSync(file, `${JSON.stringify({ ...record, ts: now() })}\n`);
+      appendFileSync(file, `${JSON.stringify({ ...record, ts: now() })}\n`, { mode: 0o600 });
       return true;
     } catch {
       return false;
@@ -89,6 +99,11 @@ export function reconcileObservations(state, observations) {
     byChild.set(o.childSessionKey, e);
   }
   const findings = [];
+  if (observations.some((o) => o.kind === "truncated"))
+    findings.push({
+      code: "observations-truncated",
+      detail: "observer log hit its size cap; later host events were not recorded",
+    });
   for (const task of state.tasks.values()) {
     const att = task.attempts.at(-1);
     const key = att?.receipt?.childSessionKey;
@@ -120,7 +135,11 @@ export function reconcileObservations(state, observations) {
           nextAction:
             "resume: read the child result via sessions_history, then recordCompletion and continue",
         });
-      else if (recorded && obs.ended.outcome && recorded !== obs.ended.outcome)
+      else if (
+        recorded &&
+        HOST_OUTCOME[obs.ended.outcome] &&
+        recorded !== HOST_OUTCOME[obs.ended.outcome]
+      )
         findings.push({
           ...base,
           code: "host-outcome-mismatch",

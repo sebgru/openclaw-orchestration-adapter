@@ -1,4 +1,5 @@
 import test from "node:test";
+import { spawn } from "node:child_process";
 import assert from "node:assert/strict";
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
@@ -528,7 +529,7 @@ test("acceptance excludes adapter fake-host evidence from standard-spawn claims"
     ledger.recordDashboardSync(id, "d");
   }
   const result = assessAcceptance(ledger.state(), { gateTaskId: "G1" });
-  assert.equal(result.accept01.met, false);
+  assert.equal(result.accept01.ledgerCriteriaMet, false);
   assert.deepEqual(result.accept01.standardDoneTasks, []);
   assert.deepEqual(result.fakeHostTaskIds, ["T1", "T2"]);
   assert.equal(result.accept01.reason, "adapter-fake-host evidence present; excluded");
@@ -545,17 +546,23 @@ test("acceptance excludes adapter fake-host evidence from standard-spawn claims"
 
 test("ORCH-ACCEPT-01: three dependent standard-spawn tasks with review halt at the owner gate", () => {
   const { ledger } = fresh();
-  assert.equal(assessAcceptance(ledger.state(), { gateTaskId: "G1" }).accept01.met, false);
+  assert.equal(
+    assessAcceptance(ledger.state(), { gateTaskId: "G1" }).accept01.ledgerCriteriaMet,
+    false,
+  );
   runToDone(ledger, "T1", 1);
   runToDone(ledger, "T2", 2, 1);
   runToDone(ledger, "T3", 3, 2);
   const a = assessAcceptance(ledger.state(), { gateTaskId: "G1" });
-  assert.equal(a.accept01.met, true);
+  assert.equal(a.accept01.ledgerCriteriaMet, true);
   assert.equal(a.accept01.haltedAtGate, true);
   assert.deepEqual(a.accept01.standardDoneTasks, ["T1", "T2", "T3"]);
-  assert.equal(assessAcceptance(ledger.state()).accept01.met, false);
+  assert.equal(assessAcceptance(ledger.state()).accept01.ledgerCriteriaMet, false);
   ledger.approveGate("G1", { approvedBy: "sebastian", ref: "pr#1" });
-  assert.equal(assessAcceptance(ledger.state(), { gateTaskId: "G1" }).accept01.met, false);
+  assert.equal(
+    assessAcceptance(ledger.state(), { gateTaskId: "G1" }).accept01.ledgerCriteriaMet,
+    false,
+  );
 });
 
 test("ORCH-ACCEPT-02: each failure scenario is reported covered only by standard-spawn evidence", () => {
@@ -744,19 +751,144 @@ test("dispatch triggers: completion must reference a dependency; owner nudges de
   const a = assessAcceptance(ledger.state(), { gateTaskId: "G1" }).accept01;
   assert.equal(a.ownerNudges, 1);
   assert.equal(a.zeroNudge, false);
-  assert.equal(a.met, false);
+  assert.equal(a.ledgerCriteriaMet, false);
   ledger.recordOwnerNudge("msg-2");
   assert.equal(ledger.state().nudges.length, 2);
 });
 
-test("a stale lock from a dead local process is recovered; a live or foreign lock is not", () => {
+test("a lock is never auto-removed; only an explicit, token-matched break of a dead local writer clears it", () => {
   const { file, ledger } = fresh();
-  writeFileSync(`${file}.lock`, JSON.stringify({ pid: 2 ** 22 + 12345, host: hostname() }));
+  const dead = { pid: 2 ** 22 + 12345, host: hostname(), token: "tok-1" };
+  writeFileSync(`${file}.lock`, JSON.stringify(dead));
+  throwsCode(() => ledger.reserveDispatch("T1"), "ledger-busy");
+  assert.equal(ledger.inspectLock().writerAlive, false);
+  throwsCode(() => ledger.breakStaleLock({ token: "wrong" }), "lock-not-stale");
+  ledger.breakStaleLock({ token: "tok-1" });
   assert.equal(ledger.reserveDispatch("T1"), 1);
-  writeFileSync(`${file}.lock`, JSON.stringify({ pid: process.pid, host: hostname() }));
+  writeFileSync(`${file}.lock`, JSON.stringify({ ...dead, pid: process.pid }));
+  throwsCode(() => ledger.breakStaleLock({ token: "tok-1" }), "lock-not-stale");
+  writeFileSync(`${file}.lock`, JSON.stringify({ ...dead, host: "elsewhere" }));
+  assert.equal(ledger.inspectLock().writerAlive, "unknown");
+  throwsCode(() => ledger.breakStaleLock({ token: "tok-1" }), "lock-not-stale");
   throwsCode(() => ledger.recordQueued("T1"), "ledger-busy");
-  writeFileSync(`${file}.lock`, JSON.stringify({ pid: 2 ** 22 + 12345, host: "elsewhere" }));
+  writeFileSync(`${file}.lock`, "garbage");
+  assert.equal(ledger.inspectLock().writerAlive, "unknown");
+});
+
+test("a failed commit releases its own lock; a foreign lock is never removed", () => {
+  const { file, ledger } = fresh();
+  assert.throws(() => ledger.addTask({ ...task("X"), dependencies: ["missing"] }));
+  assert.equal(ledger.inspectLock().locked, false);
+  const foreign = JSON.stringify({ pid: 1, host: "elsewhere", token: "foreign" });
+  writeFileSync(`${file}.lock`, foreign);
   throwsCode(() => ledger.recordQueued("T1"), "ledger-busy");
+  assert.equal(readFileSync(`${file}.lock`, "utf8"), foreign);
+});
+
+test("concurrent writer processes never corrupt the chain or lose acknowledged events", () => {
+  const { file, ledger } = fresh();
+  const before = ledger.integrity().events;
+  const script = `
+    import { createTaskLedger } from ${JSON.stringify(new URL("../src/index.js", import.meta.url).href)};
+    const l = createTaskLedger({ file: ${JSON.stringify(file)} });
+    const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    let ok = 0;
+    for (let i = 0; i < 15; i++) {
+      for (let tries = 0; tries < 2000; tries++) {
+        try { l.recordOwnerNudge("p" + process.pid + "-" + i); ok++; break; }
+        catch (e) { if (e.code !== "ledger-busy") throw e; sleep(1); }
+      }
+    }
+    process.stdout.write(String(ok));
+  `;
+  const procs = Array.from({ length: 6 }, () =>
+    spawn(process.execPath, ["--input-type=module", "-e", script]),
+  );
+  return Promise.all(
+    procs.map(
+      (p) =>
+        new Promise((resolve, reject) => {
+          let out = "";
+          let err = "";
+          p.stdout.on("data", (d) => (out += d));
+          p.stderr.on("data", (d) => (err += d));
+          p.on("exit", (code) => (code === 0 ? resolve(Number(out)) : reject(new Error(err))));
+        }),
+    ),
+  ).then((counts) => {
+    assert.deepEqual(counts, [15, 15, 15, 15, 15, 15]);
+    assert.equal(ledger.integrity().events, before + 90);
+    assert.equal(ledger.state().nudges.length, 90);
+    assert.equal(ledger.inspectLock().locked, false);
+  });
+});
+
+test("model receipt matching is exact unless the caller configured a provider alias; never substituted", () => {
+  const cases = [
+    [{}, { resolvedProvider: "claude-cli" }, "model-mismatch"],
+    [
+      {},
+      { resolvedModel: "anthropic/claude-sonnet-5-5", resolvedProvider: "claude-cli" },
+      "model-mismatch",
+    ],
+    [{}, { resolvedModel: "claude-opus-5-5" }, "model-mismatch"],
+    [{ providerAliases: { anthropic: ["claude-cli"] } }, { resolvedProvider: "claude-cli" }, null],
+    [
+      { providerAliases: { anthropic: ["claude-cli"] } },
+      { resolvedProvider: "other" },
+      "model-mismatch",
+    ],
+    [{}, {}, null],
+  ];
+  cases.forEach(([opts, extra, code], i) => {
+    const { ledger } = fresh(opts);
+    ledger.reserveDispatch("T1");
+    ledger.recordReceipt("T1", receipt(i, extra));
+    const t = ledger.state().tasks.get("T1");
+    assert.equal(t.blocker?.code ?? null, code, JSON.stringify(extra));
+    if (!code) assert.match(t.attempts.at(-1).receipt.modelMatch, /exact|provider-alias/);
+  });
+});
+
+test("publisher-blocked tasks show a publish-retry next action and recovery flags them", () => {
+  const { ledger } = fresh();
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" });
+  ledger.recordVerification("T1", { verifier: "v", verdict: "pass", evidenceRefs: ["e"] });
+  ledger.recordPublisherFailure("T1", "503");
+  const row = ledger.view().tasks.find((r) => r.id === "T1");
+  assert.equal(row.verified, true);
+  assert.match(row.nextAction, /retry the dashboard checkpoint/);
+  assert.deepEqual(
+    ledger.recover().flagged.filter((f) => f.taskId === "T1"),
+    [{ taskId: "T1", action: "publish-checkpoint" }],
+  );
+});
+
+test("acceptance reports ledger-only criteria and host corroboration separately", () => {
+  const { ledger } = fresh();
+  for (const [id, n, prev] of [
+    ["T1", 1],
+    ["T2", 2, 1],
+    ["T3", 3, 2],
+  ])
+    runToDone(ledger, id, n, prev);
+  const bare = assessAcceptance(ledger.state(), { gateTaskId: "G1" }).accept01;
+  assert.equal(bare.ledgerCriteriaMet, true);
+  assert.equal(bare.hostCorroborated, false);
+  assert.match(bare.notice, /not proof of a live/);
+  const obs = [1, 2, 3].flatMap((n) => [
+    { kind: "spawned", runId: `run-${n}`, childSessionKey: `agent:main:subagent:${n}` },
+    { kind: "ended", outcome: "ok", childSessionKey: `agent:main:subagent:${n}` },
+  ]);
+  const ok = assessAcceptance(ledger.state(), { gateTaskId: "G1", observations: obs }).accept01;
+  assert.equal(ok.hostCorroborated, true);
+  const bad = assessAcceptance(ledger.state(), {
+    gateTaskId: "G1",
+    observations: obs.slice(2),
+  }).accept01;
+  assert.deepEqual(bad.uncorroboratedTaskIds, ["T1"]);
 });
 
 test("plugin registers a read-only owner-only ledger status tool only when configured", async () => {

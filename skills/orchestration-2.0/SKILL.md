@@ -28,6 +28,10 @@ The main session is the coordinator and stays accountable for the plan, routing,
 12. **Worker tree.** Only the coordinator spawns; workers may propose splits but do not spawn by default. [CUE:CENTRAL_DISPATCH]
 13. **Denials are reported accurately.** Surface actual tool denials as such; do not describe them as task failure or a worker error. [CUE:DENIAL_VISIBLE]
 
+## Durable ledger (optional)
+
+When a task ledger is configured, follow the write/continuation order in [`docs/completion-driven-continuation.md`](../../docs/completion-driven-continuation.md#coordinator-writecontinuation-procedure). Ledger acceptance output is coordinator-asserted; never report it as live acceptance without owner review of the run log, and never record an owner decision without an authenticated owner message.
+
 ## Three-dependent-task trial shape
 
 T1 implement -> T2 verify/test (deps T1) -> T3 independent review (deps T2), then gate G1 human PR review. Pass when the log shows: three standard `sessions_spawn` receipts with recorded actual models, zero owner nudges between T1-T3, each task `done` only after coordinator verification and a dashboard sync, and the run halted at G1 with no adapter dispatch.
