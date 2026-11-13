@@ -945,6 +945,7 @@ export function createTaskLedger({
     /** Record a trusted completion envelope; identity is matched on childSessionKey, not worker text. */
     recordCompletion({ childSessionKey, outcome, digest, reason }) {
       const locate = (s) => {
+        if (!nonEmpty(childSessionKey)) return undefined;
         for (const t of s.tasks.values()) {
           const a = t.attempts.find((x) => x.receipt?.childSessionKey === childSessionKey);
           if (a) return { t, a };

@@ -1645,3 +1645,25 @@ test("reviewer owner exclusion checks both identifiers, regardless of verifier i
     );
   }
 });
+
+test("a completion without a child identity never correlates to an attempt lacking one", () => {
+  for (const key of [undefined, null, ""]) {
+    const { ledger } = fresh();
+    ledger.reserveDispatch("T1");
+    throwsCode(
+      () => ledger.recordCompletion({ childSessionKey: key, outcome: "ok" }),
+      "unmatched-completion",
+    );
+    assert.equal(ledger.state().tasks.get("T1").status, "running", `reserved, key=${String(key)}`);
+
+    ledger.recordReceipt("T1", receipt(1, { childSessionKey: undefined }));
+    assert.equal(ledger.state().tasks.get("T1").blocker.code, "receipt-incomplete");
+    throwsCode(
+      () => ledger.recordCompletion({ childSessionKey: key, outcome: "ok" }),
+      "unmatched-completion",
+    );
+    const a = ledger.state().tasks.get("T1").attempts[0];
+    assert.equal(a.completion, null, `incomplete receipt, key=${String(key)}`);
+    assert.equal(a.outcome, "running");
+  }
+});
