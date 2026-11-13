@@ -905,12 +905,14 @@ test("acceptance reports ledger-only criteria and host corroboration separately"
     { kind: "ended", runId: "run-1", childSessionKey: "agent:main:subagent:1", outcome: null },
   ]) {
     assert.deepEqual(
-      assessAcceptance(ledger.state(), { observations: [...obs, extra] }).accept01.uncorroboratedTaskIds,
+      assessAcceptance(ledger.state(), { observations: [...obs, extra] }).accept01
+        .uncorroboratedTaskIds,
       ["T1"],
     );
   }
   assert.equal(
-    assessAcceptance(ledger.state(), { observations: [...obs, { kind: "truncated" }] }).accept01.hostCorroborated,
+    assessAcceptance(ledger.state(), { observations: [...obs, { kind: "truncated" }] }).accept01
+      .hostCorroborated,
     false,
   );
   const bad = assessAcceptance(ledger.state(), {
