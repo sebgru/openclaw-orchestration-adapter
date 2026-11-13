@@ -97,6 +97,7 @@ function normalizeTask(t) {
     fail(`task ${t.id} needs an explicit timeoutMs`, "invalid-plan");
   const kind = t.kind ?? "worker";
   if (!["worker", "gate"].includes(kind)) fail(`task ${t.id} has unknown kind`, "invalid-plan");
+  if (t.role != null && !nonEmpty(t.role)) fail(`task ${t.id} has invalid role`, "invalid-plan");
   return {
     id: t.id,
     kind,
@@ -888,11 +889,22 @@ export function createTaskLedger({
           fail("a pass requires fresh evidence references", "invalid-verification");
         if (verdict === "reject" && !nonEmpty(findings))
           fail("a rejection records findings", "invalid-verification");
-        // Independent-agent review is derived from ledger evidence (the verifier is another task's
-        // completed child), never from a caller-supplied label. Anything else stays owner-gated.
+        // These are caller-supplied claims checked against advisory ledger evidence,
+        // not authenticated identities or proof of independence.
+        const ancestors = new Set();
+        const collect = (id) => {
+          for (const dependency of s.tasks.get(id).dependencies) {
+            if (!ancestors.has(dependency)) {
+              ancestors.add(dependency);
+              collect(dependency);
+            }
+          }
+        };
+        collect(taskId);
         const independent = [...s.tasks.values()].some(
           (o) =>
-            o.id !== taskId &&
+            o.id !== taskId && o.kind === "worker" && o.role === "review" &&
+            !ancestors.has(o.id) &&
             o.attempts.some(
               (x) =>
                 x.completion?.outcome === "ok" &&
@@ -901,7 +913,7 @@ export function createTaskLedger({
             ),
         );
         const reviewProvenance =
-          independent && reviewerKind !== "human" && !owners.includes(verifier)
+          reviewerKind === "agent" && independent && !owners.includes(verifier)
             ? "independent-agent"
             : "unverified";
         return {

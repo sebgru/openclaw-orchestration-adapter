@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import assert from "node:assert/strict";
 import { appendFileSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
+import { reduceLedger } from "../src/task-ledger.js";
 import path from "node:path";
 import {
   assessAcceptance,
@@ -1061,6 +1062,8 @@ test("rejected gate cannot be reopened by non-owner", () => {
 
 function rejectedWith(ledger, verifier, extra = {}) {
   runToDone(ledger, "T1", 1);
+  ledger.addTask(task("Reviewer", { role: "review" }));
+  runToDone(ledger, "Reviewer", 9);
   ledger.reserveDispatch("T2");
   ledger.recordReceipt("T2", receipt(2));
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:2", outcome: "ok" });
@@ -1069,7 +1072,7 @@ function rejectedWith(ledger, verifier, extra = {}) {
 
 test("independent agent review rejection permits scoped bounded correction without owner", () => {
   const { ledger } = fresh({ owners: [] });
-  rejectedWith(ledger, "agent:main:subagent:1");
+  rejectedWith(ledger, "agent:main:subagent:9", { reviewerKind: "agent" });
   const t = ledger.state().tasks.get("T2");
   assert.equal(t.blocker.ownerRequired, false);
   throwsCode(
@@ -1089,7 +1092,9 @@ test("independent agent review rejection permits scoped bounded correction witho
 test("unverified, human-claimed or owner reviewers keep rejection owner-gated", () => {
   for (const [verifier, extra] of [
     ["someone", {}],
-    ["agent:main:subagent:1", { reviewerKind: "human" }],
+    ["agent:main:subagent:9", {}],
+    ["agent:main:subagent:9", { reviewerKind: "human" }],
+    ["agent:main:subagent:1", { reviewerKind: "agent" }],
     ["sebastian", {}],
   ]) {
     const { ledger } = fresh();
@@ -1126,12 +1131,15 @@ test("agent-review correction retries stay bounded by maxAttempts", () => {
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" });
   ledger.recordVerification("T1", { verifier: "v", verdict: "pass", evidenceRefs: ["e"] });
   ledger.recordDashboardSync("T1", "d");
+  ledger.addTask(task("Reviewer", { role: "review" }));
+  runToDone(ledger, "Reviewer", 9);
   ledger.addTask(task("R", { maxAttempts: 1 }));
   ledger.reserveDispatch("R");
   ledger.recordReceipt("R", receipt(5));
   ledger.recordCompletion({ childSessionKey: "agent:main:subagent:5", outcome: "ok" });
   ledger.recordVerification("R", {
-    verifier: "agent:main:subagent:1",
+    verifier: "agent:main:subagent:9",
+    reviewerKind: "agent",
     verdict: "reject",
     findings: "bad",
   });
@@ -1142,4 +1150,42 @@ test("agent-review correction retries stay bounded by maxAttempts", () => {
     correctionScope: "s",
   });
   throwsCode(() => ledger.reserveDispatch("R"), "attempts-exhausted");
+});
+
+test("reviewer ancestry and unsuccessful reviewer attempts are owner-gated", () => {
+  for (const mode of ["ancestor", "error", "abandoned"]) {
+    const { ledger } = fresh();
+    ledger.addTask(task("Reviewer", { role: "review" }));
+    ledger.reserveDispatch("Reviewer");
+    ledger.recordReceipt("Reviewer", receipt(9, mode === "abandoned" ? { resolvedModel: "wrong" } : {}));
+    if (mode === "abandoned") {
+      ledger.resolveBlocker("Reviewer", { reason: "stop", authorizedBy: "c", sideEffectsChecked: true, childStatus: "cancelled", childEvidence: "subagents" });
+      throwsCode(() => ledger.recordCompletion({ childSessionKey: "agent:main:subagent:9", outcome: "ok" }), "unmatched-completion");
+    } else {
+      ledger.recordCompletion({ childSessionKey: "agent:main:subagent:9", outcome: mode === "error" ? "error" : "ok" });
+      if (mode === "ancestor") {
+        ledger.recordVerification("Reviewer", { verifier: "v", verdict: "pass", evidenceRefs: ["e"] });
+        ledger.recordDashboardSync("Reviewer", "d");
+      }
+    }
+    ledger.addTask(task("Target", { dependencies: mode === "ancestor" ? ["Reviewer"] : [] }));
+    ledger.reserveDispatch("Target");
+    ledger.recordReceipt("Target", receipt(10));
+    ledger.recordCompletion({ childSessionKey: "agent:main:subagent:10", outcome: "ok" });
+    throwsCode(() => ledger.recordVerification("Target", { verifier: "agent:main:subagent:10", reviewerKind: "agent", verdict: "reject", findings: "x" }), "invalid-verification");
+    ledger.recordVerification("Target", { verifier: "agent:main:subagent:9", reviewerKind: "agent", verdict: "reject", findings: "x" });
+    assert.equal(ledger.state().tasks.get("Target").blocker.ownerRequired, true, mode);
+  }
+});
+
+
+test("legacy rejection replay without provenance requires an owner", () => {
+  const events = [
+    { type: "plan_declared", data: { planId: "p", tasks: [{ ...task("T"), kind: "worker", dependencies: [] }] } },
+    { type: "dispatch_reserved", data: { taskId: "T", attempt: 1 } },
+    { type: "verification_recorded", data: { taskId: "T", verdict: "reject", verifier: "v", findings: "x" } },
+  ];
+  const t = reduceLedger(events).tasks.get("T");
+  assert.equal(t.attempts[0].verification.reviewProvenance, "unverified");
+  assert.equal(t.blocker.ownerRequired, true);
 });
