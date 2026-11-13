@@ -354,7 +354,8 @@ export function renderStatusMarkdown(view) {
  * not live acceptance: `evidenceSource` and receipts are coordinator-asserted, so
  * synthetic or hand-written entries can satisfy it. `hostCorroborated` is true only
  * when every standard-spawn done task has a matching host-observed spawn and a
- * successful end record with the same run id (pass `observations` from the lifecycle observer); even
+ * successful, uncontradicted end record with the same run id in a non-truncated
+ * observation log (pass `observations` from the lifecycle observer); even
  * then the owner must review the run log. Only `standard-spawn` receipts
  * count; adapter fake-host evidence is listed separately. The ledger cannot see
  * owner chat, so "zero nudge" means: every dependent dispatch was triggered by a
@@ -403,7 +404,7 @@ export function assessAcceptance(state, { gateTaskId, observations = [] } = {}) 
     if (!o?.childSessionKey) continue;
     const e = seen.get(o.childSessionKey) ?? {};
     if (o.kind === "spawned") e.spawned ??= o;
-    else if (o.kind === "ended") e.ended ??= o;
+    else if (o.kind === "ended") (e.ended ??= []).push(o);
     seen.set(o.childSessionKey, e);
   }
   const uncorroborated = doneStd
@@ -413,8 +414,9 @@ export function assessAcceptance(state, { gateTaskId, observations = [] } = {}) 
       return !(
         e?.spawned &&
         e.spawned.runId === r.runId &&
-        e.ended?.runId === r.runId &&
-        e.ended.outcome === "ok"
+        !observations.some((o) => o?.kind === "truncated") &&
+        e.ended?.some((end) => end.runId === r.runId && end.outcome === "ok") &&
+        !e.ended.some((end) => end.runId === r.runId && end.outcome !== "ok")
       );
     })
     .map((t) => t.id);
@@ -519,7 +521,7 @@ export function createTaskLedger({
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
       fail(
-        "ledger is locked by another writer; use inspectLock() and break the lock only if its writer is gone",
+        "ledger is locked; inspect the lock and establish that all writers are quiescent before manual removal",
         "ledger-busy",
       );
     }
