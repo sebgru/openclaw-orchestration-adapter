@@ -173,6 +173,10 @@
           "file": {
             "type": "string",
             "minLength": 1
+          },
+          "observe": {
+            "type": "boolean",
+            "description": "Also record host subagent_spawned/subagent_ended hook events to <file>.observed.jsonl and report them in the status tool. Observation only."
           }
         }
       }

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createLifecycleObserver, reconcileObservations } from "./lifecycle-observer.js";
 import {
   assessAcceptance,
   createTaskLedger,
@@ -14,10 +15,16 @@ export function normalizeLedgerConfig(config) {
   if (config === null || typeof config !== "object" || Array.isArray(config))
     throw new TypeError("ledger must be an object");
   for (const key of Object.keys(config))
-    if (key !== "file") throw new TypeError(`ledger.${key} is not a known setting`);
+    if (key !== "file" && key !== "observe") throw new TypeError(`ledger.${key} is not a known setting`);
   if (typeof config.file !== "string" || !path.isAbsolute(config.file))
     throw new TypeError("ledger.file must be an absolute path");
-  return Object.freeze({ file: config.file });
+  if (config.observe !== undefined && typeof config.observe !== "boolean")
+    throw new TypeError("ledger.observe must be a boolean");
+  return Object.freeze({
+    file: config.file,
+    observe: config.observe === true,
+    observationsFile: `${config.file}.observed.jsonl`,
+  });
 }
 
 /**
@@ -49,6 +56,12 @@ export function createLedgerToolFactory({ limits }) {
             integrity: ledger.integrity(),
             view,
             acceptance: assessAcceptance(state, { gateTaskId: params?.gateTaskId }),
+            hostObserved: limits.observe
+              ? reconcileObservations(
+                  state,
+                  createLifecycleObserver({ file: limits.observationsFile }).read(),
+                )
+              : null,
             markdown: renderStatusMarkdown(view),
           };
         } catch (e) {
