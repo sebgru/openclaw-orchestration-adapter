@@ -289,7 +289,15 @@ export function deriveStatusView(state) {
   const done = (id) => state.tasks.get(id)?.status === "done";
   const rows = [...state.tasks.values()].map((t) => {
     const waitingOn = t.dependencies.filter((d) => !done(d));
-    const upstreamBlocked = waitingOn.filter((d) => state.tasks.get(d).status === "blocked");
+    const upstreamBlocked = waitingOn.filter((d) => {
+      const dependency = state.tasks.get(d);
+      return (
+        dependency.status === "blocked" ||
+        (dependency.kind === "worker" &&
+          dependency.status === "pending" &&
+          dependency.attempt >= dependency.maxAttempts)
+      );
+    });
     // A single review-ready dependency can be consumed only with its exact
     // current artifact binding; all other dependencies must already be done.
     const target =
@@ -304,7 +312,10 @@ export function deriveStatusView(state) {
     let status = t.status;
     let next;
     if (status === "pending") {
-      if (reviewBinding) {
+      if (t.kind === "worker" && t.attempt >= t.maxAttempts) {
+        status = "attempts-exhausted";
+        next = "attempt limit exhausted; owner review required";
+      } else if (reviewBinding) {
         status = "ready";
         next = `dispatch with review binding for ${reviewBinding.taskId} attempt ${reviewBinding.attempt} digest ${reviewBinding.digest}`;
       } else if (waitingOn.length) {
@@ -416,9 +427,30 @@ export function assessAcceptance(state, { gateTaskId, observations = [] } = {}) 
   });
   const dependent = doneStd.filter((t) => t.dependencies.length);
   const review = doneStd.some((t) => t.role === "review");
-  const independentlyVerified = doneStd.every((t) =>
-    nonEmpty(openAttempt(t).verification?.verifier),
-  );
+  // ACCEPT-01 requires an independent review, not an infinite chain of
+  // independently reviewed reviewers. Only a bound, recorded review of a done
+  // task by a done standard-spawn review worker counts; these remain assertions.
+  const independentlyVerified = doneStd.some((t) => {
+    const a = openAttempt(t);
+    const v = a.verification;
+    return (
+      v?.verdict === "pass" &&
+      v.reviewProvenance === "independent-agent" &&
+      v.reviewBinding?.taskId === t.id &&
+      v.reviewBinding?.attempt === a.n &&
+      v.reviewBinding?.digest === a.completion?.digest &&
+      doneStd.some((reviewer) => {
+        const r = openAttempt(reviewer);
+        return (
+          reviewer.role === "review" &&
+          [r.receipt?.childSessionKey, r.receipt?.runId].includes(v.verifier) &&
+          r.reviewBinding?.taskId === t.id &&
+          r.reviewBinding?.attempt === a.n &&
+          r.reviewBinding?.digest === a.completion?.digest
+        );
+      })
+    );
+  });
   const gate = gateTaskId ? state.tasks.get(gateTaskId) : undefined;
   const haltedAtGate =
     Boolean(gate) &&

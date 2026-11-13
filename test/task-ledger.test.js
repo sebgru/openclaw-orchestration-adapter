@@ -389,6 +389,11 @@ test("retry needs an explicit resolved blocker, side-effect check, and is bounde
     authorizedBy: "coordinator",
     sideEffectsChecked: true,
   });
+  const exhausted = ledger.view().tasks.find((t) => t.id === "T1");
+  assert.equal(exhausted.status, "attempts-exhausted");
+  assert.match(exhausted.nextAction, /owner review/);
+  assert.equal(exhausted.reviewBinding, null);
+  assert.equal(ledger.view().tasks.find((t) => t.id === "T2").status, "blocked-upstream");
   throwsCode(() => ledger.reserveDispatch("T1"), "attempts-exhausted");
 });
 
@@ -555,19 +560,48 @@ test("acceptance excludes adapter fake-host evidence from standard-spawn claims"
   );
 });
 
+function runAcceptedChain(ledger) {
+  ledger.addTask(task("BoundReview", { role: "review" }));
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1));
+  ledger.recordCompletion({
+    childSessionKey: "agent:main:subagent:1",
+    outcome: "ok",
+    digest: "artifact",
+  });
+  ledger.reserveDispatch("BoundReview", {
+    reviewBinding: { taskId: "T1", attempt: 1, digest: "artifact" },
+  });
+  ledger.recordReceipt("BoundReview", receipt(4));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:4", outcome: "ok" });
+  ledger.recordVerification("BoundReview", {
+    verifier: "other",
+    verdict: "pass",
+    evidenceRefs: ["review-evidence"],
+  });
+  ledger.recordDashboardSync("BoundReview", "d-review");
+  ledger.recordVerification("T1", {
+    verifier: "agent:main:subagent:4",
+    reviewerKind: "agent",
+    verdict: "pass",
+    evidenceRefs: ["e"],
+  });
+  ledger.recordDashboardSync("T1", "d1");
+  runToDone(ledger, "T2", 2, 1);
+  runToDone(ledger, "T3", 3, 2);
+}
+
 test("ORCH-ACCEPT-01: three dependent standard-spawn tasks with review halt at the owner gate", () => {
   const { ledger } = fresh();
   assert.equal(
     assessAcceptance(ledger.state(), { gateTaskId: "G1" }).accept01.ledgerCriteriaMet,
     false,
   );
-  runToDone(ledger, "T1", 1);
-  runToDone(ledger, "T2", 2, 1);
-  runToDone(ledger, "T3", 3, 2);
+  runAcceptedChain(ledger);
   const a = assessAcceptance(ledger.state(), { gateTaskId: "G1" });
   assert.equal(a.accept01.ledgerCriteriaMet, true);
   assert.equal(a.accept01.haltedAtGate, true);
-  assert.deepEqual(a.accept01.standardDoneTasks, ["T1", "T2", "T3"]);
+  assert.deepEqual(a.accept01.standardDoneTasks, ["T1", "T2", "T3", "BoundReview"]);
   assert.equal(assessAcceptance(ledger.state()).accept01.ledgerCriteriaMet, false);
   ledger.approveGate("G1", { approvedBy: "sebastian", ref: "pr#1" });
   assert.equal(
@@ -884,7 +918,8 @@ test("acceptance reports ledger-only criteria and host corroboration separately"
   ])
     runToDone(ledger, id, n, prev);
   const bare = assessAcceptance(ledger.state(), { gateTaskId: "G1" }).accept01;
-  assert.equal(bare.ledgerCriteriaMet, true);
+  assert.equal(bare.ledgerCriteriaMet, false);
+  assert.equal(bare.independentlyVerified, false);
   assert.equal(bare.hostCorroborated, false);
   assert.match(bare.notice, /not proof of a live/);
   const obs = [1, 2, 3].flatMap((n) => [
@@ -1520,6 +1555,32 @@ test("readiness schedules a bound review only when its other dependencies are do
   throwsCode(() => ledger.reserveDispatch("ReviewDependent"), "dependency-unmet");
   ledger.reserveDispatch(ready.id, { reviewBinding: ready.reviewBinding });
   assert.equal(row().status, "running");
+});
+
+test("an exhausted bound reviewer is not shown ready", () => {
+  const { ledger } = fresh();
+  ledger.addTask(task("Bound", { role: "review", dependencies: ["T1"], maxAttempts: 1 }));
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1));
+  ledger.recordCompletion({
+    childSessionKey: "agent:main:subagent:1",
+    outcome: "ok",
+    digest: "artifact",
+  });
+  ledger.reserveDispatch("Bound", {
+    reviewBinding: { taskId: "T1", attempt: 1, digest: "artifact" },
+  });
+  ledger.recordReceipt("Bound", receipt(8));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:8", outcome: "error" });
+  ledger.resolveBlocker("Bound", {
+    reason: "checked",
+    authorizedBy: "c",
+    sideEffectsChecked: true,
+  });
+  const row = ledger.view().tasks.find((t) => t.id === "Bound");
+  assert.equal(row.status, "attempts-exhausted");
+  assert.equal(row.reviewBinding, null);
+  throwsCode(() => ledger.reserveDispatch("Bound"), "attempts-exhausted");
 });
 
 test("reviewer owner exclusion checks both identifiers, regardless of verifier identifier", () => {
