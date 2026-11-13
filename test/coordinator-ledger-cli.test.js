@@ -41,3 +41,17 @@ test("local coordinator bridge persists transitions, blocks unsafe receipt and o
   assert.equal(call("approveGate", "G", {}).status, 1);
   assert.equal(call("view").result.tasks[0].status, "blocked");
 });
+
+test("bridge rejects request-supplied aliases", () => {
+  const p = spawnSync(process.execPath, ["bin/coordinator-ledger.js"], {
+    input: JSON.stringify({
+      file: "/tmp/unused-ledger",
+      method: "view",
+      args: [],
+      providerAliases: { anthropic: ["openai"] },
+    }),
+    encoding: "utf8",
+  });
+  assert.equal(p.status, 1);
+  assert.match(JSON.parse(p.stdout).error, /providerAliases/);
+});

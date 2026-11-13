@@ -72,8 +72,8 @@ test("observer stops appending at its size cap and marks truncation once", () =>
 test("reconcile reports a host-ended child the ledger never recorded, and mismatches", () => {
   const { ledger } = setup();
   const state = ledger.state();
-  assert.deepEqual(reconcileObservations(state, []), []);
-  assert.deepEqual(reconcileObservations(state, [{ kind: "spawned" }]), []);
+  assert.equal(reconcileObservations(state, [])[0].code, "host-spawn-missing");
+  assert.equal(reconcileObservations(state, [{ kind: "spawned" }])[0].code, "host-spawn-missing");
   const spawned = {
     kind: "spawned",
     childSessionKey: CHILD,
@@ -94,11 +94,20 @@ test("reconcile reports a host-ended child the ledger never recorded, and mismat
   ledger.recordCompletion({ childSessionKey: CHILD, outcome: "ok" });
   const done = ledger.state();
   assert.deepEqual(
-    reconcileObservations(done, [{ kind: "ended", childSessionKey: CHILD, outcome: "ok" }]),
+    reconcileObservations(done, [
+      spawned,
+      { kind: "ended", childSessionKey: CHILD, outcome: "ok" },
+    ]),
     [],
   );
-  assert.deepEqual(reconcileObservations(done, [{ kind: "ended", childSessionKey: CHILD }]), []);
-  f = reconcileObservations(done, [{ kind: "ended", childSessionKey: CHILD, outcome: "timeout" }]);
+  assert.deepEqual(
+    reconcileObservations(done, [spawned, { kind: "ended", childSessionKey: CHILD }]),
+    [],
+  );
+  f = reconcileObservations(done, [
+    spawned,
+    { kind: "ended", childSessionKey: CHILD, outcome: "timeout" },
+  ]);
   assert.equal(f[0].code, "host-outcome-mismatch");
 });
 
@@ -143,7 +152,21 @@ test("observer log is owner-only, maps host outcomes, and reports truncation", a
   assert.deepEqual(reconcileObservations(ledger.state(), obs.read()), []);
   const cut = reconcileObservations(ledger.state(), [{ kind: "truncated" }]);
   assert.equal(cut[0].code, "observations-truncated");
-  const unknown = [{ kind: "ended", childSessionKey: CHILD, outcome: "mystery" }];
+  const unknown = [
+    { kind: "spawned", childSessionKey: CHILD },
+    { kind: "ended", childSessionKey: CHILD, outcome: "mystery" },
+  ];
   assert.deepEqual(reconcileObservations(ledger.state(), unknown), []);
   assert.equal(obs.observeSpawned(null), false);
+});
+
+test("conflicting host terminal events are all examined", () => {
+  const { ledger } = setup();
+  ledger.recordCompletion({ childSessionKey: CHILD, outcome: "ok" });
+  const rows = [
+    { kind: "spawned", childSessionKey: CHILD },
+    { kind: "ended", childSessionKey: CHILD, outcome: "ok" },
+    { kind: "ended", childSessionKey: CHILD, outcome: "error" },
+  ];
+  assert.equal(reconcileObservations(ledger.state(), rows)[0].code, "host-outcome-mismatch");
 });

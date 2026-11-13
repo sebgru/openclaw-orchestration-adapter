@@ -153,6 +153,7 @@ export function reduceLedger(events) {
     switch (type) {
       case "plan_declared":
         state.planId = data.planId;
+        state.providerAliases = data.providerAliases ?? {};
         for (const def of data.tasks) state.tasks.set(def.id, emptyTask(def));
         break;
       case "task_added":
@@ -167,6 +168,7 @@ export function reduceLedger(events) {
         task.attempts.push({
           n: data.attempt,
           reservedAt: ts,
+          label: data.label ?? null,
           receipt: null,
           queued: false,
           completion: null,
@@ -184,6 +186,10 @@ export function reduceLedger(events) {
         att.receipt = data.receipt;
         att.evidenceSource = data.receipt.evidenceSource;
         att.outcome = "running";
+        if (task.blocker?.code === "admission-unknown") {
+          task.blocker = null;
+          task.status = "running";
+        }
         if (data.problem) block(task, data.problem.code, data.problem.reason);
         break;
       case "queued_observed":
@@ -481,11 +487,14 @@ export function createTaskLedger({
 
   function load() {
     if (!existsSync(file)) return { events: [], head: GENESIS, tornTail: false, validBytes: 0 };
-    const lines = readFileSync(file, "utf8").split("\n");
-    if (lines.at(-1) === "") lines.pop();
+    const raw = readFileSync(file, "utf8");
+    const lines = raw.split("\n");
+    const unterminated = lines.at(-1) !== "";
+    if (!unterminated) lines.pop();
     const events = [];
     let head = GENESIS;
     let tornTail = false;
+    let missingNewline = false;
     let validBytes = 0;
     lines.forEach((line, i) => {
       let rec;
@@ -502,17 +511,19 @@ export function createTaskLedger({
       if (body.prev !== head || hash !== sha(JSON.stringify(body)) || body.seq !== i + 1)
         fail(`ledger chain broken at line ${i + 1}`, "ledger-corrupt");
       head = hash;
-      validBytes += Buffer.byteLength(line) + 1;
+      const lastUnterminated = unterminated && i === lines.length - 1;
+      validBytes += Buffer.byteLength(line) + (lastUnterminated ? 0 : 1);
+      if (lastUnterminated) missingNewline = true;
       events.push(body);
     });
-    return { events, head, tornTail, validBytes };
+    return { events, head, tornTail, validBytes, missingNewline };
   }
 
   /**
    * The lock is created atomically (O_EXCL) and carries a unique token. It is never
    * removed on a guess: two processes judging the same lock "stale" could each delete
    * the other's fresh lock. A crashed writer's lock is cleared only by the explicit,
-   * operator-invoked `breakStaleLock`.
+   * manual removal after establishing all writers are quiescent.
    */
   function acquireLock() {
     let fd;
@@ -591,14 +602,17 @@ export function createTaskLedger({
   function commit(type, build) {
     const lock = acquireLock();
     try {
-      const { events, head, tornTail, validBytes } = load();
+      const { events, head, tornTail, validBytes, missingNewline } = load();
       const data = build(reduceLedger(events));
       const body = { seq: events.length + 1, ts: now(), type, data, prev: head };
       // The torn tail never became durable; drop it so the chain stays contiguous.
       if (tornTail) truncateSync(file, validBytes);
       const fd = openSync(file, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY, 0o600);
       try {
-        writeSync(fd, `${JSON.stringify({ ...body, hash: sha(JSON.stringify(body)) })}\n`);
+        writeSync(
+          fd,
+          `${missingNewline ? "\n" : ""}${JSON.stringify({ ...body, hash: sha(JSON.stringify(body)) })}\n`,
+        );
         fsyncSync(fd);
       } finally {
         closeSync(fd);
@@ -614,12 +628,12 @@ export function createTaskLedger({
    * `provider/model` is the norm; a runtime-specific provider name is accepted
    * only if the caller configured it in `providerAliases` for that requested provider.
    */
-  function matchModel(requested, r) {
+  function matchModel(requested, r, aliasesByProvider) {
     if (`${r.resolvedProvider}/${r.resolvedModel}` === requested) return "exact";
     const i = requested.indexOf("/");
     if (i < 0) return r.resolvedModel === requested ? "exact" : null;
     const [reqProvider, reqModel] = [requested.slice(0, i), requested.slice(i + 1)];
-    const aliases = providerAliases?.[reqProvider];
+    const aliases = aliasesByProvider?.[reqProvider];
     if (
       r.resolvedModel === reqModel &&
       Array.isArray(aliases) &&
@@ -668,7 +682,7 @@ export function createTaskLedger({
       validateDag(defs);
       return commit("plan_declared", (s) => {
         if (s.planId) fail("plan already declared; use addTask to extend", "plan-exists");
-        return { planId, tasks: defs };
+        return { planId, tasks: defs, providerAliases };
       });
     },
 
@@ -691,7 +705,7 @@ export function createTaskLedger({
     },
 
     /** Durably reserve an attempt BEFORE calling sessions_spawn; returns the attempt number. */
-    reserveDispatch(taskId, { trigger } = {}) {
+    reserveDispatch(taskId, { trigger, label } = {}) {
       let attempt;
       commit("dispatch_reserved", (s) => {
         const t = need(s, taskId);
@@ -742,7 +756,9 @@ export function createTaskLedger({
           } else fail("invalid dispatch trigger", "invalid-trigger");
         }
         attempt = t.attempt + 1;
-        return { taskId, attempt, trigger: recorded };
+        if (label !== undefined && !nonEmpty(label))
+          fail("label must be non-empty", "invalid-dispatch");
+        return { taskId, attempt, trigger: recorded, label: label ?? null };
       });
       return attempt;
     },
@@ -751,8 +767,22 @@ export function createTaskLedger({
     recordReceipt(taskId, input) {
       return commit("spawn_receipt", (s) => {
         const t = need(s, taskId);
-        const a = needAttempt(t, "running");
+        const a =
+          t.status === "blocked" && t.blocker?.code === "admission-unknown"
+            ? openAttempt(t)
+            : needAttempt(t, "running");
         if (a.receipt) fail(`${taskId} attempt ${a.n} already has a receipt`, "duplicate-receipt");
+        if (
+          nonEmpty(input.childSessionKey) &&
+          [...s.tasks.values()].some((task) =>
+            task.attempts.some(
+              (attempt) => attempt.receipt?.childSessionKey === input.childSessionKey,
+            ),
+          )
+        )
+          fail("child session key already belongs to an attempt", "duplicate-child");
+        if (t.blocker?.code === "admission-unknown" && !nonEmpty(input.childSessionKey))
+          fail("late receipt needs a child identity", "invalid-receipt");
         const evidenceSource = input.evidenceSource;
         if (!EVIDENCE_SOURCES.includes(evidenceSource))
           fail("receipt needs an explicit evidenceSource", "invalid-receipt");
@@ -775,7 +805,7 @@ export function createTaskLedger({
           problem = { code: "model-unavailable", reason: String(input.unavailable) };
         else if (missing.length)
           problem = { code: "receipt-incomplete", reason: `missing ${missing.join(", ")}` };
-        else if (!(receipt.modelMatch = matchModel(t.requestedModel, receipt)))
+        else if (!(receipt.modelMatch = matchModel(t.requestedModel, receipt, s.providerAliases)))
           problem = {
             code: "model-mismatch",
             reason: `requested ${t.requestedModel}, receipt ${receipt.resolvedProvider}/${receipt.resolvedModel}`,
@@ -935,6 +965,13 @@ export function createTaskLedger({
           fail(`${taskId} has no open blocker`, "invalid-transition");
         if (!nonEmpty(reason) || !nonEmpty(authorizedBy))
           fail("resolution needs reason and authorizedBy", "invalid-resolution");
+        if (t.kind === "gate" || ["gate-rejected", "review-rejected"].includes(t.blocker.code))
+          requireOwner(authorizedBy);
+        if (t.blocker.code === "admission-unknown" && !openAttempt(t)?.receipt)
+          fail(
+            "admission remains unknown; attach the late receipt before proceeding",
+            "admission-unknown",
+          );
         if (sideEffectsChecked !== true && t.kind === "worker" && openAttempt(t))
           fail("confirm side effects of the prior attempt were inspected", "invalid-resolution");
         if (t.blocker.code === "publisher-unavailable")

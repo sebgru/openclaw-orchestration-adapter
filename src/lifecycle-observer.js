@@ -17,7 +17,8 @@ const text = (v) => (typeof v === "string" && v.length > 0 ? v.slice(0, MAX_FIEL
 /**
  * Host-observed subagent lifecycle log. It is fed only by the host's
  * `subagent_spawned` / `subagent_ended` hooks, never by worker text, so it is a
- * trusted second source for spawn receipts and terminal outcomes. It is a
+ * independent diagnostic source for spawn receipts and terminal outcomes. The log
+ * is writable by the same OS user as the coordinator and is not a security boundary. It is a
  * separate append-only file: the coordinator's task ledger stays single-writer.
  * It observes only; it cannot resume the requester session or spawn work.
  */
@@ -93,9 +94,9 @@ export function reconcileObservations(state, observations) {
   const byChild = new Map();
   for (const o of observations) {
     if (!o.childSessionKey) continue;
-    const e = byChild.get(o.childSessionKey) ?? { spawned: null, ended: null };
+    const e = byChild.get(o.childSessionKey) ?? { spawned: null, ended: [] };
     if (o.kind === "spawned") e.spawned ??= o;
-    else if (o.kind === "ended") e.ended ??= o;
+    else if (o.kind === "ended") e.ended.push(o);
     byChild.set(o.childSessionKey, e);
   }
   const findings = [];
@@ -109,9 +110,14 @@ export function reconcileObservations(state, observations) {
     const key = att?.receipt?.childSessionKey;
     if (!key) continue;
     const obs = byChild.get(key);
-    if (!obs) continue;
     const base = { taskId: task.id, childSessionKey: key };
-    if (obs.spawned) {
+    if (!obs?.spawned)
+      findings.push({
+        ...base,
+        code: "host-spawn-missing",
+        detail: "no host spawn observation for recorded receipt",
+      });
+    if (obs?.spawned) {
       const r = att.receipt;
       for (const [field, host, rec] of [
         ["runId", obs.spawned.runId, r.runId],
@@ -125,25 +131,21 @@ export function reconcileObservations(state, observations) {
             detail: `${field}: host observed ${host}, ledger recorded ${rec}`,
           });
     }
-    if (obs.ended) {
+    for (const ended of obs?.ended ?? []) {
       const recorded = att.completion?.outcome ?? null;
       if (!recorded && task.status === "running")
         findings.push({
           ...base,
           code: "host-ended-unrecorded",
-          detail: `host reports child ended (${obs.ended.outcome ?? "unknown"}) but the ledger has no completion`,
+          detail: `host reports child ended (${ended.outcome ?? "unknown"}) but the ledger has no completion`,
           nextAction:
             "resume: read the child result via sessions_history, then recordCompletion and continue",
         });
-      else if (
-        recorded &&
-        HOST_OUTCOME[obs.ended.outcome] &&
-        recorded !== HOST_OUTCOME[obs.ended.outcome]
-      )
+      else if (recorded && HOST_OUTCOME[ended.outcome] && recorded !== HOST_OUTCOME[ended.outcome])
         findings.push({
           ...base,
           code: "host-outcome-mismatch",
-          detail: `host outcome ${obs.ended.outcome}, ledger outcome ${recorded}`,
+          detail: `host outcome ${ended.outcome}, ledger outcome ${recorded}`,
         });
     }
   }

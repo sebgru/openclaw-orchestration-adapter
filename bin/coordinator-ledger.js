@@ -26,7 +26,9 @@ try {
   const request = JSON.parse(readFileSync(0, "utf8"));
   if (!methods.has(request.method) || !Array.isArray(request.args))
     throw new TypeError("allowlisted method and args array required");
-  const ledger = createTaskLedger({ file: request.file, providerAliases: request.providerAliases });
+  if (Object.hasOwn(request, "providerAliases"))
+    throw new TypeError("providerAliases cannot be supplied through the bridge");
+  const ledger = createTaskLedger({ file: request.file });
   const result = ledger[request.method](...request.args);
   // State contains Maps; present the status view after mutations instead of serializing them.
   process.stdout.write(

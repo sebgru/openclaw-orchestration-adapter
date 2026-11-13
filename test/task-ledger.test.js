@@ -474,12 +474,22 @@ test("recovery never auto-redispatches a reservation without a receipt", () => {
   const t = resumed.state().tasks.get("T1");
   assert.equal(t.blocker.code, "admission-unknown");
   throwsCode(() => resumed.reserveDispatch("T1"), "duplicate-dispatch");
-  resumed.resolveBlocker("T1", {
-    reason: "subagents list shows no run for T1",
-    authorizedBy: "coordinator",
-    sideEffectsChecked: true,
-  });
-  assert.equal(resumed.reserveDispatch("T1"), 2);
+  throwsCode(
+    () =>
+      resumed.resolveBlocker("T1", {
+        reason: "checked",
+        authorizedBy: "coordinator",
+        sideEffectsChecked: true,
+      }),
+    "admission-unknown",
+  );
+  throwsCode(
+    () => resumed.recordReceipt("T1", receipt(1, { childSessionKey: null })),
+    "invalid-receipt",
+  );
+  resumed.recordReceipt("T1", receipt(1));
+  assert.equal(resumed.state().tasks.get("T1").status, "running");
+  throwsCode(() => resumed.reserveDispatch("T1"), "duplicate-dispatch");
 });
 
 test("a torn trailing write is not durable and is repaired on the next append", () => {
@@ -975,4 +985,76 @@ test("applied timeout mismatch blocks, while absent or matching is accepted", ()
       assert.equal(ledger.state().tasks.get("T1").status, "blocked");
     }
   }
+});
+
+test("persisted alias policy cannot be widened on reopen", () => {
+  const { file, ledger } = fresh();
+  ledger.reserveDispatch("T1");
+  const reopened = createTaskLedger({ file, providerAliases: { anthropic: ["openai"] } });
+  reopened.recordReceipt("T1", receipt(1, { resolvedProvider: "openai" }));
+  assert.equal(reopened.state().tasks.get("T1").blocker.code, "model-mismatch");
+});
+
+test("gate and review rejection resolution require a configured owner", () => {
+  const { ledger } = fresh();
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "ok" });
+  ledger.recordVerification("T1", {
+    verifier: "reviewer",
+    verdict: "reject",
+    evidenceRefs: ["x"],
+    findings: "defect",
+  });
+  throwsCode(
+    () =>
+      ledger.resolveBlocker("T1", {
+        reason: "retry",
+        authorizedBy: "other",
+        sideEffectsChecked: true,
+      }),
+    "not-owner",
+  );
+  ledger.resolveBlocker("T1", {
+    reason: "retry",
+    authorizedBy: "sebastian",
+    sideEffectsChecked: true,
+  });
+});
+
+test("complete final record without newline is retained and repaired", () => {
+  const { file, ledger } = fresh();
+  ledger.reserveDispatch("T1");
+  const raw = readFileSync(file, "utf8");
+  writeFileSync(file, raw.slice(0, -1));
+  assert.equal(ledger.state().tasks.get("T1").status, "running");
+  ledger.recordReceipt("T1", receipt(1));
+  assert.equal(ledger.state().tasks.get("T1").attempts[0].receipt.runId, "run-1");
+  assert.equal(ledger.integrity().tornTail, false);
+});
+
+test("duplicate child identity cannot be reused across attempts", () => {
+  const { ledger } = fresh();
+  ledger.reserveDispatch("T1");
+  ledger.recordReceipt("T1", receipt(1));
+  ledger.recordCompletion({ childSessionKey: "agent:main:subagent:1", outcome: "error" });
+  ledger.resolveBlocker("T1", {
+    reason: "retry",
+    authorizedBy: "coordinator",
+    sideEffectsChecked: true,
+  });
+  ledger.reserveDispatch("T1");
+  throwsCode(() => ledger.recordReceipt("T1", receipt(1)), "duplicate-child");
+});
+
+test("rejected gate cannot be reopened by non-owner", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "oa2-gate-"));
+  const ledger = createTaskLedger({ file: path.join(dir, "ledger"), owners: ["sebastian"] });
+  ledger.declarePlan({ planId: "gate", tasks: [task("G", { kind: "gate" })] });
+  ledger.rejectGate("G", "no", { rejectedBy: "sebastian" });
+  throwsCode(
+    () => ledger.resolveBlocker("G", { reason: "reopen", authorizedBy: "other" }),
+    "not-owner",
+  );
+  ledger.resolveBlocker("G", { reason: "reopen", authorizedBy: "sebastian" });
 });
