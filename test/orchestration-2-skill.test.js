@@ -45,6 +45,12 @@ test("skill uses sessions_spawn and treats adapter dispatch as an exception", ()
   assert.match(skill, /Do not use `orchestration_dispatch`/);
 });
 
+test("ordinary worker briefs do not introduce routine token budgets", () => {
+  assert.match(skill, /Do not add a routine token or tool-call budget for ordinary workers/);
+  assert.match(skill, /If the owner explicitly requests a budget/);
+  assert.match(skill, /distinguish an advisory instruction from a host-enforced limit/);
+});
+
 test("dependent chains use private parent completion turns for no-nudge continuation", () => {
   assert.ok(skill.includes("[CUE:PRIVATE_PARENT_CONTINUATION]"));
   assert.match(skill, /completionTarget: "parent"/);
