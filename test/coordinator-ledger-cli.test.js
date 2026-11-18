@@ -136,3 +136,48 @@ test("bridge defaults an omitted reviewer kind to owner-gated even with a review
   ]);
   assert.equal(JSON.parse(result.stdout).code, "owners-not-configured");
 });
+
+test("bridge receipt gate accepts qualified resolvedModel and blocks provider/model mismatch", () => {
+  function run(resolvedProvider, resolvedModel) {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "oa2-cli-qual-")), "ledger.jsonl");
+    const call = (method, ...args) => {
+      const p = spawnSync(process.execPath, ["bin/coordinator-ledger.js"], {
+        input: JSON.stringify({ file, method, args }),
+        encoding: "utf8",
+      });
+      return { status: p.status, ...JSON.parse(p.stdout) };
+    };
+    call("declarePlan", {
+      planId: "p",
+      tasks: [
+        {
+          id: "T1",
+          goal: "x",
+          successCriteria: ["x"],
+          requestedModel: "anthropic/claude-sonnet-5-5",
+          timeoutMs: 1000,
+        },
+      ],
+    });
+    call("recordCapability", { tools: ["sessions_spawn", "sessions_yield", "subagents"] });
+    call("reserveDispatch", "T1");
+    return call("recordReceipt", "T1", {
+      evidenceSource: "standard-spawn",
+      runId: "r",
+      childSessionKey: "c",
+      resolvedProvider,
+      resolvedModel,
+      appliedTimeout: 1000,
+    }).result.tasks[0];
+  }
+  assert.equal(run("anthropic", "anthropic/claude-sonnet-5-5").status, "running");
+  for (const [provider, model] of [
+    ["anthropic", "anthropic/claude-opus-5-5"],
+    ["openai", "anthropic/claude-sonnet-5-5"],
+  ]) {
+    const task = run(provider, model);
+    assert.equal(task.status, "blocked");
+    assert.equal(task.blocker.code, "model-mismatch");
+    assert.match(task.blocker.reason, /requested anthropic\/claude-sonnet-5-5, receipt /);
+  }
+});

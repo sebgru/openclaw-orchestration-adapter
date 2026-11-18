@@ -713,12 +713,14 @@ export function createTaskLedger({
    */
   function matchModel(requested, r, aliasesByProvider) {
     if (`${r.resolvedProvider}/${r.resolvedModel}` === requested) return "exact";
+    if (r.resolvedModel === requested && requested.startsWith(`${r.resolvedProvider}/`))
+      return "exact";
     const i = requested.indexOf("/");
     if (i < 0) return r.resolvedModel === requested ? "exact" : null;
     const [reqProvider, reqModel] = [requested.slice(0, i), requested.slice(i + 1)];
     const aliases = aliasesByProvider?.[reqProvider];
     if (
-      r.resolvedModel === reqModel &&
+      (r.resolvedModel === reqModel || r.resolvedModel === requested) &&
       Array.isArray(aliases) &&
       aliases.includes(r.resolvedProvider)
     )
@@ -945,6 +947,7 @@ export function createTaskLedger({
     /** Record a trusted completion envelope; identity is matched on childSessionKey, not worker text. */
     recordCompletion({ childSessionKey, outcome, digest, reason }) {
       const locate = (s) => {
+        if (!nonEmpty(childSessionKey)) return undefined;
         for (const t of s.tasks.values()) {
           const a = t.attempts.find((x) => x.receipt?.childSessionKey === childSessionKey);
           if (a) return { t, a };

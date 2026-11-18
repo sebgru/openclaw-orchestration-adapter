@@ -918,10 +918,23 @@ test("model receipt matching is exact unless the caller configured a provider al
     [{ providerAliases: { anthropic: ["claude-cli"] } }, { resolvedProvider: "claude-cli" }, null],
     [
       { providerAliases: { anthropic: ["claude-cli"] } },
+      { resolvedProvider: "claude-cli", resolvedModel: "anthropic/claude-sonnet-5-5" },
+      null,
+    ],
+    [
+      { providerAliases: { anthropic: ["claude-cli"] } },
+      { resolvedProvider: "claude-cli", resolvedModel: "other/claude-sonnet-5-5" },
+      "model-mismatch",
+    ],
+    [
+      { providerAliases: { anthropic: ["claude-cli"] } },
       { resolvedProvider: "other" },
       "model-mismatch",
     ],
     [{}, {}, null],
+    [{}, { resolvedModel: "anthropic/claude-sonnet-5-5" }, null],
+    [{}, { resolvedModel: "other/claude-sonnet-5-5" }, "model-mismatch"],
+    [{}, { resolvedModel: "anthropic/claude-opus-5-5" }, "model-mismatch"],
   ];
   cases.forEach(([opts, extra, code], i) => {
     const { ledger } = fresh(opts);
@@ -929,7 +942,10 @@ test("model receipt matching is exact unless the caller configured a provider al
     ledger.recordReceipt("T1", receipt(i, extra));
     const t = ledger.state().tasks.get("T1");
     assert.equal(t.blocker?.code ?? null, code, JSON.stringify(extra));
-    if (!code) assert.match(t.attempts.at(-1).receipt.modelMatch, /exact|provider-alias/);
+    if (!code) {
+      const expected = extra.resolvedProvider === "claude-cli" ? "provider-alias" : "exact";
+      assert.equal(t.attempts.at(-1).receipt.modelMatch, expected);
+    }
   });
 });
 
@@ -1643,5 +1659,27 @@ test("reviewer owner exclusion checks both identifiers, regardless of verifier i
         }),
       "not-owner",
     );
+  }
+});
+
+test("a completion without a child identity never correlates to an attempt lacking one", () => {
+  for (const key of [undefined, null, ""]) {
+    const { ledger } = fresh();
+    ledger.reserveDispatch("T1");
+    throwsCode(
+      () => ledger.recordCompletion({ childSessionKey: key, outcome: "ok" }),
+      "unmatched-completion",
+    );
+    assert.equal(ledger.state().tasks.get("T1").status, "running", `reserved, key=${String(key)}`);
+
+    ledger.recordReceipt("T1", receipt(1, { childSessionKey: undefined }));
+    assert.equal(ledger.state().tasks.get("T1").blocker.code, "receipt-incomplete");
+    throwsCode(
+      () => ledger.recordCompletion({ childSessionKey: key, outcome: "ok" }),
+      "unmatched-completion",
+    );
+    const a = ledger.state().tasks.get("T1").attempts[0];
+    assert.equal(a.completion, null, `incomplete receipt, key=${String(key)}`);
+    assert.equal(a.outcome, "running");
   }
 });
