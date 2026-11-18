@@ -168,9 +168,16 @@ test("bridge receipt gate accepts qualified resolvedModel and blocks provider/mo
       resolvedProvider,
       resolvedModel,
       appliedTimeout: 1000,
-    }).result.tasks[0].status;
+    }).result.tasks[0];
   }
-  assert.equal(run("anthropic", "anthropic/claude-sonnet-5-5"), "running");
-  assert.equal(run("anthropic", "anthropic/claude-opus-5-5"), "blocked");
-  assert.equal(run("openai", "anthropic/claude-sonnet-5-5"), "blocked");
+  assert.equal(run("anthropic", "anthropic/claude-sonnet-5-5").status, "running");
+  for (const [provider, model] of [
+    ["anthropic", "anthropic/claude-opus-5-5"],
+    ["openai", "anthropic/claude-sonnet-5-5"],
+  ]) {
+    const task = run(provider, model);
+    assert.equal(task.status, "blocked");
+    assert.equal(task.blocker.code, "model-mismatch");
+    assert.match(task.blocker.reason, /requested anthropic\/claude-sonnet-5-5, receipt /);
+  }
 });

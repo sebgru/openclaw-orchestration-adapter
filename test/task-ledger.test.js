@@ -942,7 +942,10 @@ test("model receipt matching is exact unless the caller configured a provider al
     ledger.recordReceipt("T1", receipt(i, extra));
     const t = ledger.state().tasks.get("T1");
     assert.equal(t.blocker?.code ?? null, code, JSON.stringify(extra));
-    if (!code) assert.match(t.attempts.at(-1).receipt.modelMatch, /exact|provider-alias/);
+    if (!code) {
+      const expected = extra.resolvedProvider === "claude-cli" ? "provider-alias" : "exact";
+      assert.equal(t.attempts.at(-1).receipt.modelMatch, expected);
+    }
   });
 });
 
