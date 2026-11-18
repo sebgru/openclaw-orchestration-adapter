@@ -20,16 +20,12 @@
     {
       "id": "T2",
       "role": "verify-test",
-      "dependsOn": [
-        "T1"
-      ]
+      "dependsOn": ["T1"]
     },
     {
       "id": "T3",
       "role": "independent-review",
-      "dependsOn": [
-        "T2"
-      ],
+      "dependsOn": ["T2"],
       "ledgerRole": "review",
       "reviewTarget": "T2"
     }
