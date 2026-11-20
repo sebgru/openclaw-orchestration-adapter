@@ -29,6 +29,11 @@ test("skill carries every machine-testable acceptance cue", () => {
     "VERIFY",
     "AUTO_PROGRESS",
     "DASHBOARD_SYNC",
+    "CLOSEOUT_ORDER",
+    "MILESTONE_PUBLISH",
+    "SETTLE_NOT_SUCCESS",
+    "LOOP_BREAKER",
+    "EXACT_MODEL_FAIL_CLOSED",
     "OWNER_SUMMARY",
     "HUMAN_GATE",
     "CENTRAL_DISPATCH",
@@ -59,8 +64,8 @@ test("dependent chains use private parent completion turns for no-nudge continua
   assert.match(skill, /docs\/completion-driven-continuation\.md/);
 });
 
-test("skill orders dashboard sync before completion and stops at human gates", () => {
-  assert.match(skill, /only then report the task complete/);
+test("skill orders closeout and stops at human gates", () => {
+  assert.match(skill, /only then report progress or dispatch the dependent task/);
   assert.match(skill, /PR review\/merge/);
   assert.match(skill, /Gateway restart/);
 });
@@ -126,4 +131,39 @@ test("owner summaries include receipt-confirmed route, remaining state, next act
   assert.match(skill, /receipt-confirmed actual worker model\/route/);
   assert.match(skill, /current remaining state/);
   assert.match(skill, /next action, and any owner decision/);
+});
+
+test("per-task closeout order puts the tracker update before any progress report", () => {
+  assert.match(
+    skill,
+    /verify, append the run-ledger line, update the canonical project tracker, commit the local dashboard snapshot/,
+  );
+  assert.match(skill, /tracker update before any progress report is mandatory/);
+});
+
+test("hosted dashboard publishing happens at milestones via a separate publisher turn", () => {
+  assert.match(skill, /at milestones and at final, not inside every automatic continuation turn/);
+  assert.match(skill, /coordinator prepares and commits the dashboard source/);
+  assert.match(skill, /separate Sites-capable publisher turn/);
+  assert.match(skill, /site\/project, source commit/);
+  assert.match(skill, /deployment succeeded, commit sha matches, access unchanged/);
+  assert.match(skill, /Workers never decide what to publish/);
+});
+
+test("settle status ok is not task success and interrupted runs are not redispatched blindly", () => {
+  assert.match(skill, /settle\/transport status of "ok"/);
+  assert.match(skill, /Read the worker's actual result/);
+  assert.match(skill, /record failed, timeout, and cancelled runs as not complete/);
+  assert.match(skill, /Never redispatch an interrupted run without an explicit resolved blocker/);
+});
+
+test("loop breaker stops after two attempts without new evidence", () => {
+  assert.match(skill, /two consecutive attempts with no new verifiable evidence/);
+  assert.match(skill, /report to the owner/);
+});
+
+test("exact-model requests fail closed at spawn without substitution", () => {
+  assert.match(skill, /exact model that is unusable/);
+  assert.match(skill, /spawn must fail/);
+  assert.match(skill, /Never substitute another model/);
 });
