@@ -31,6 +31,7 @@ test("skill carries every machine-testable acceptance cue", () => {
     "DASHBOARD_SYNC",
     "CLOSEOUT_ORDER",
     "MILESTONE_PUBLISH",
+    "ARTIFACT_PUBLISH",
     "SETTLE_NOT_SUCCESS",
     "LOOP_BREAKER",
     "EXACT_MODEL_FAIL_CLOSED",
@@ -166,4 +167,10 @@ test("exact-model requests fail closed at spawn without substitution", () => {
   assert.match(skill, /exact model that is unusable/);
   assert.match(skill, /spawn must fail/);
   assert.match(skill, /Never substitute another model/);
+});
+
+test("Claude Artifact dashboards publish via Claude Code at the same URL with read-back verification", () => {
+  assert.match(skill, /private Claude Artifact/);
+  assert.match(skill, /update the existing artifact at the same URL/);
+  assert.match(skill, /reading back the published copy/);
 });
